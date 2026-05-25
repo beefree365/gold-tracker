@@ -1,0 +1,12 @@
+{
+    "name": "gold-tracker",
+    "version": "1.0.0",
+    "private": true,
+    "type": "commonjs",
+    "scripts": {
+        "start:wss": "node wss-gold.js"
+    },
+    "dependencies": {
+        "ws": "^8.18.0"
+    }
+}
