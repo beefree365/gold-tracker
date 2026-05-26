@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const { WebSocket } = require('ws');
 
 const token = process.env.FINNHUB_TOKEN;

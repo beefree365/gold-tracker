@@ -4,9 +4,16 @@
     "private": true,
     "type": "commonjs",
     "scripts": {
-        "start:wss": "node wss-gold.js"
+        "start:wss": "node wss-gold.js",
+        "draw:gcm6-kline": "node scripts/gcm6-kline.js",
+        "draw:finnhub-kline": "node scripts/finnhub-kline.js",
+        "draw:massive-spot-kline": "node scripts/massive-spot-kline.js",
+        "draw:twelve-kline": "node scripts/twelve-kline.js",
+        "estimate:gold-futures": "node scripts/estimate-gold-futures.js"
     },
     "dependencies": {
+        "@napi-rs/canvas": "^0.1.100",
+        "dotenv": "^16.6.1",
         "ws": "^8.18.0"
     }
 }
