@@ -83,6 +83,13 @@ out
 dist
 .output
 
+# Gold Tracker output files (CSV and PNG)
+output/csv/
+output/charts/
+!output/.gitkeep
+
+img/*
+
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and not Next.js

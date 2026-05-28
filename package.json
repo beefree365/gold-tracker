@@ -5,15 +5,23 @@
     "type": "commonjs",
     "scripts": {
         "start:wss": "node wss-gold.js",
+        "start:wss-spot": "node wss-spot.js",
+        "start:wss-itick": "node wss-itick.js",
         "draw:gcm6-kline": "node scripts/gcm6-kline.js",
         "draw:finnhub-kline": "node scripts/finnhub-kline.js",
         "draw:massive-spot-kline": "node scripts/massive-spot-kline.js",
         "draw:twelve-kline": "node scripts/twelve-kline.js",
-        "estimate:gold-futures": "node scripts/estimate-gold-futures.js"
+        "estimate:gold-futures": "node scripts/estimate-gold-futures.js",
+        "fetch:futures-only": "node scripts/fetch-futures-only.js",
+        "fetch:spot-based-on-futures": "node scripts/fetch-spot-based-on-futures.js",
+        "fetch:latest-spot": "node scripts/fetch-latest-spot.js",
+        "fetch:spot-custom": "node scripts/fetch-spot-custom.js",
+        "fetch:futures-custom": "node scripts/fetch-futures-custom.js"
     },
     "dependencies": {
         "@napi-rs/canvas": "^0.1.100",
         "dotenv": "^16.6.1",
+        "node-fetch": "^2.7.0",
         "ws": "^8.18.0"
     }
 }
