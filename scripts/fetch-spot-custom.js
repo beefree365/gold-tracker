@@ -110,33 +110,60 @@ function priceToY(price, minPrice, maxPrice, top, height) {
 }
 
 function drawSpotChart(spotBars) {
-    const width = 1400;
-    const height = 700;
+    // ================= 动态分辨率计算 =================
+    // 保证每根K线至少有 4 像素宽，确保绝对清晰。最窄 1920 (1080p标准)，最宽限制在 12000 像素防内存溢出
+    const minPixelsPerCandle = 3;
+    const padLeft = 100;
+    const padRight = 40;
+    const calculatedWidth = padLeft + padRight + (spotBars.length * minPixelsPerCandle);
+    const width = Math.min(Math.max(1920, calculatedWidth), 12000); 
+    const height = 1980; // 高度统一提升到 1080 级别，细节更丰富
+
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    const padLeft = 96;
-    const padRight = 24;
-    const padTop = 46;
+    const padTop = 80;    // 调整顶部留白，因为标题合并为了一行
     const padBottom = 80;
     const chartHeight = height - padTop - padBottom;
     const chartWidth = width - padLeft - padRight;
 
-    // Background
-    ctx.fillStyle = '#0f172a';
+    // 常用美观字体栈
+    const fontFamily = '"Helvetica Neue", Helvetica, Arial, "Microsoft YaHei", sans-serif';
+
+    // 背景 (亮色)
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
 
-    // Title
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = 'bold 26px sans-serif';
-    ctx.fillText('XAU/USD Spot Price K-Line', padLeft, 30);
+    // ================= 顶部信息栏 (合并为一行) =================
+    const headerY = 46;
 
-    // Subtitle
-    ctx.font = '14px sans-serif';
-    ctx.fillStyle = '#cbd5e1';
-    ctx.fillText(`${spotBars.length} bars | ${formatTimestamp(spotBars[0].timestamp)} -> ${formatTimestamp(spotBars[spotBars.length - 1].timestamp)}`, padLeft, 62);
+    // 1. 大标题
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `bold 28px ${fontFamily}`;
+    const titleText = 'XAU/USD Spot Price K-Line';
+    ctx.fillText(titleText, padLeft, headerY);
+    const titleWidth = ctx.measureText(titleText).width;
 
-    // Calculate price range
+    // 2. 副标题 (大标题右侧 30px)
+    const subX = padLeft + titleWidth + 30;
+    ctx.font = `16px ${fontFamily}`;
+    ctx.fillStyle = '#64748b';
+    const subText = `${spotBars.length} bars | ${formatTimestamp(spotBars[0].timestamp)} -> ${formatTimestamp(spotBars[spotBars.length - 1].timestamp)}`;
+    ctx.fillText(subText, subX, headerY);
+    const subWidth = ctx.measureText(subText).width;
+
+    // 3. 图例与 Label (副标题右侧 50px)
+    const legendX = subX + subWidth + 50;
+    ctx.fillStyle = '#10b981'; // 绿块
+    ctx.fillRect(legendX, headerY - 14, 16, 16);
+    ctx.fillStyle = '#ef4444'; // 红块
+    ctx.fillRect(legendX + 22, headerY - 14, 16, 16);
+    
+    ctx.fillStyle = '#475569';
+    ctx.font = `15px ${fontFamily}`;
+    ctx.fillText('Spot (XAU/USD)', legendX + 48, headerY);
+
+    // ================= 计算价格极值 =================
     const allPrices = spotBars.flatMap((bar) => [bar.open, bar.high, bar.low, bar.close]);
     const minPrice = Math.min(...allPrices);
     const maxPrice = Math.max(...allPrices);
@@ -145,24 +172,28 @@ function drawSpotChart(spotBars) {
     const plotMin = minPrice - padding;
     const plotMax = maxPrice + padding;
 
-    // Draw grid lines
-    ctx.strokeStyle = '#334155';
+    // ================= 绘制网格与 Y 轴刻度 =================
+    ctx.strokeStyle = '#e2e8f0'; 
     ctx.lineWidth = 1;
-    for (let i = 0; i <= 5; i += 1) {
-        const y = padTop + (chartHeight / 5) * i;
+    // 高度变大了，把网格线加到 8 根让刻度更精细
+    const gridLines = 8;
+    for (let i = 0; i <= gridLines; i += 1) {
+        const y = padTop + (chartHeight / gridLines) * i;
         ctx.beginPath();
         ctx.moveTo(padLeft, y);
         ctx.lineTo(width - padRight, y);
         ctx.stroke();
 
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '13px sans-serif';
-        ctx.fillText((plotMax - ((plotMax - plotMin) / 5) * i).toFixed(2), 12, y + 4);
+        ctx.fillStyle = '#475569';
+        ctx.font = `14px ${fontFamily}`;
+        // 价格刻度保留两位小数
+        ctx.fillText((plotMax - ((plotMax - plotMin) / gridLines) * i).toFixed(2), 16, y + 5);
     }
 
-    const candleWidth = Math.max(2, Math.floor(chartWidth / Math.max(spotBars.length, 1) * 0.55));
+    // 动态蜡烛宽度：画布变宽后，适当增加蜡烛实体的占比，看起来更饱满
+    const candleWidth = Math.max(3, Math.floor((chartWidth / Math.max(spotBars.length, 1)) * 0.65));
 
-    // Draw candlesticks
+    // ================= 绘制 K 线与 X 轴时间 =================
     for (let i = 0; i < spotBars.length; i += 1) {
         const bar = spotBars[i];
         const x = padLeft + i * (chartWidth / Math.max(spotBars.length - 1, 1));
@@ -171,33 +202,38 @@ function drawSpotChart(spotBars) {
         const highY = priceToY(bar.high, plotMin, plotMax, padTop, chartHeight);
         const lowY = priceToY(bar.low, plotMin, plotMax, padTop, chartHeight);
 
-        // Wick
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 1;
+        const isUp = bar.close >= bar.open;
+        const candleColor = isUp ? '#10b981' : '#ef4444'; 
+
+        // 上下影线
+        ctx.strokeStyle = candleColor;
+        ctx.lineWidth = 1.5; // 分辨率提高后，影线稍微加粗一点
         ctx.beginPath();
         ctx.moveTo(x, highY);
         ctx.lineTo(x, lowY);
         ctx.stroke();
 
-        // Body
-        ctx.fillStyle = '#38bdf8';
+        // 实体
+        ctx.fillStyle = candleColor;
         ctx.fillRect(x - candleWidth / 2, Math.min(openY, closeY), candleWidth, Math.max(2, Math.abs(closeY - openY)));
 
-        // Time labels
-        if (i % Math.max(1, Math.floor(spotBars.length / 10)) === 0) {
-            ctx.fillStyle = '#cbd5e1';
-            ctx.font = '12px sans-serif';
+        // X轴时间标签 (画布变长了，可以展示更多的时间节点，大约分成 20 个节点)
+        const timeLabelInterval = Math.max(1, Math.floor(spotBars.length / 20));
+        if (i % timeLabelInterval === 0) {
+            ctx.fillStyle = '#64748b'; 
+            ctx.font = `14px ${fontFamily}`;
             ctx.textAlign = 'center';
-            ctx.fillText(formatTimestamp(bar.timestamp).slice(5, 16), x, height - 20);
+            // 提取 HH:mm 格式，例如 14:30
+            ctx.fillText(formatTimestamp(bar.timestamp).slice(11, 16), x, height - 30);
+            
+            // X轴上的小刻度标记
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.beginPath();
+            ctx.moveTo(x, height - padBottom + 5);
+            ctx.lineTo(x, height - padBottom + 10);
+            ctx.stroke();
         }
     }
-
-    // Legend
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '13px sans-serif';
-    ctx.fillText('Spot (XAU/USD)', padLeft + 120, 100);
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(padLeft + 70, 88, 12, 12);
 
     return canvas;
 }
