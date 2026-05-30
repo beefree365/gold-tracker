@@ -64,6 +64,9 @@ async function fetchSpotData(startDate, endDate) {
     url.searchParams.set('start_date', startDate);
     url.searchParams.set('end_date', endDate);
     url.searchParams.set('order', 'asc');
+    
+    // 【修复】：强制请求最大数据量，覆盖默认的 30 条限制
+    url.searchParams.set('outputsize', '5000'); 
 
     const response = await fetch(url.toString(), {
         headers: {
@@ -200,18 +203,19 @@ function drawSpotChart(spotBars) {
 }
 
 function parseDateInput(dateStr) {
-    // Support multiple formats:
-    // - "2024-01-01"
-    // - "2024-01-01 10:00:00"
-    // - "2024-01-01T10:00:00"
-    // - ISO format
-    
     if (!dateStr) {
         throw new Error('Date string is required');
     }
 
-    // Try to parse the date
-    const date = new Date(dateStr);
+    let normalizedStr = dateStr.trim();
+    // 【修复】：仅判断末尾是否包含时区信息，避免匹配到日期中的 '-'
+    const hasTimezone = /[Zz]$/.test(normalizedStr) || /[+\-]\d{2}:?\d{2}$/.test(normalizedStr);
+    
+    if (!hasTimezone) {
+        normalizedStr = normalizedStr.replace(' ', 'T') + 'Z';
+    }
+
+    const date = new Date(normalizedStr);
     
     if (isNaN(date.getTime())) {
         throw new Error(`Invalid date format: ${dateStr}. Use format like "2024-01-01" or "2024-01-01 10:00:00"`);
@@ -221,7 +225,6 @@ function parseDateInput(dateStr) {
 }
 
 function formatDateForTwelve(date) {
-    // Format: YYYY-MM-DD HH:MM:SS
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
@@ -233,7 +236,6 @@ function formatDateForTwelve(date) {
 }
 
 function generateTimestampSuffix(startDate, endDate) {
-    // Generate a filename-friendly timestamp from the date range
     const start = new Date(startDate);
     const end = new Date(endDate);
     
@@ -250,48 +252,47 @@ function generateTimestampSuffix(startDate, endDate) {
 }
 
 async function main() {
-    // Parse command line arguments
     const args = process.argv.slice(2);
     
-    if (args.length < 2) {
+    if (args.length === 0) {
         console.log('Usage: node scripts/fetch-spot-custom.js <start_date> <end_date>');
+        console.log('       node scripts/fetch-spot-custom.js latest  (Fetches last 24 hours)');
         console.log('');
         console.log('Examples:');
+        console.log('  node scripts/fetch-spot-custom.js latest');
         console.log('  node scripts/fetch-spot-custom.js "2024-01-01" "2024-01-02"');
         console.log('  node scripts/fetch-spot-custom.js "2024-01-01 10:00:00" "2024-01-01 18:00:00"');
-        console.log('  node scripts/fetch-spot-custom.js "2024-01-01T10:00:00Z" "2024-01-01T18:00:00Z"');
-        console.log('');
-        console.log('Note: Dates can be in any format supported by JavaScript Date constructor');
         process.exit(1);
     }
 
     try {
-        const startDateStr = args[0];
-        const endDateStr = args[1];
+        let startDate, endDate;
 
-        console.log('=== Gold Spot Data Fetcher ===\n');
-        console.log(`Input start date: ${startDateStr}`);
-        console.log(`Input end date: ${endDateStr}\n`);
+        // 【新增】：支持 latest 参数，获取最近 24 小时的数据
+        if (args[0].toLowerCase() === 'latest') {
+            endDate = new Date();
+            startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
+            console.log('=== Gold Spot Data Fetcher (Latest 24h) ===\n');
+        } else {
+            if (args.length < 2) throw new Error('Must provide both start and end dates');
+            console.log('=== Gold Spot Data Fetcher ===\n');
+            startDate = parseDateInput(args[0]);
+            endDate = parseDateInput(args[1]);
+        }
 
-        // Parse dates
-        const startDate = parseDateInput(startDateStr);
-        const endDate = parseDateInput(endDateStr);
+        console.log(`Resolved start date (UTC): ${startDate.toISOString()}`);
+        console.log(`Resolved end date (UTC): ${endDate.toISOString()}\n`);
 
         if (startDate >= endDate) {
             throw new Error('Start date must be before end date');
         }
 
-        // Format dates for TwelveData API
         const formattedStart = formatDateForTwelve(startDate);
         const formattedEnd = formatDateForTwelve(endDate);
 
-        // Step 1: Fetch spot data
         const spotBars = await fetchSpotData(formattedStart, formattedEnd);
-
-        // Step 2: Generate timestamp suffix for filenames
         const timestampSuffix = generateTimestampSuffix(startDate, endDate);
 
-        // Step 3: Save to CSV
         console.log('\nSaving spot data to CSV...');
         const csvRows = ['timestamp,minute,open,high,low,close,volume'];
         for (const bar of spotBars) {
@@ -301,7 +302,6 @@ async function main() {
         const csvFilename = `spot-data-${timestampSuffix}.csv`;
         const outputDir = path.join(__dirname, '..', 'output', 'csv');
         
-        // Ensure output directory exists
         if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
         }
@@ -310,14 +310,12 @@ async function main() {
         fs.writeFileSync(csvPath, csvRows.join('\n'), 'utf8');
         console.log(`Saved to: ${csvPath}`);
 
-        // Step 4: Draw chart
         console.log('\nDrawing spot chart...');
         const canvas = drawSpotChart(spotBars);
         
         const pngFilename = `spot-kline-${timestampSuffix}.png`;
         const chartsDir = path.join(__dirname, '..', 'output', 'charts');
         
-        // Ensure charts directory exists
         if (!fs.existsSync(chartsDir)) {
             fs.mkdirSync(chartsDir, { recursive: true });
         }
@@ -326,7 +324,6 @@ async function main() {
         fs.writeFileSync(outputPath, canvas.toBuffer('image/png'));
         console.log(`Chart saved to: ${outputPath}`);
 
-        // Summary
         console.log('\n=== Summary ===');
         console.log(`Total bars: ${spotBars.length}`);
         console.log(`Price range: $${Math.min(...spotBars.map(b => b.close)).toFixed(2)} - $${Math.max(...spotBars.map(b => b.close)).toFixed(2)}`);

@@ -16,7 +16,8 @@
         "fetch:spot-based-on-futures": "node scripts/fetch-spot-based-on-futures.js",
         "fetch:latest-spot": "node scripts/fetch-latest-spot.js",
         "fetch:spot-custom": "node scripts/fetch-spot-custom.js",
-        "fetch:futures-custom": "node scripts/fetch-futures-custom.js"
+        "fetch:futures-custom": "node scripts/fetch-futures-custom.js",
+        "clean:output": "node scripts/clean-output.js"
     },
     "dependencies": {
         "@napi-rs/canvas": "^0.1.100",
