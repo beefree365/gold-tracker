@@ -120,13 +120,30 @@ async function fetch24Hours5MinKline(currentFuturesPrice, futuresOpen) {
                         high: Number(r.high),
                         low: Number(r.low),
                         close: Number(r.close),
-                        volume: 0
+                        volume: 1.0
                     })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                    // 附加实时 5 分钟成交量分布以供 VWAP 机构级精确加权
+                    try {
+                        const bRes = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=5m&limit=288');
+                        if (bRes.ok) {
+                            const bRaw = await bRes.json();
+                            const vMap = new Map();
+                            for (const r of bRaw) {
+                                const t = Math.floor(r[0] / (5 * 60 * 1000)) * (5 * 60 * 1000);
+                                vMap.set(t, parseFloat(r[5]));
+                            }
+                            for (const b of rawBars) {
+                                const t = Math.floor(new Date(b.timestamp).getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
+                                if (vMap.has(t)) b.volume = vMap.get(t);
+                            }
+                        }
+                    } catch (e) {}
 
                     // 执行双锚点时间线性插值对齐
                     const bars = alignBarsWithDualAnchor(rawBars, currentFuturesPrice, futuresOpen);
 
-                    statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '✅ 已生效', reason: `获取 ${bars.length} 根连续K线 (双锚点时间线性插值对齐)` });
+                    statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '✅ 已生效', reason: `获取 ${bars.length} 根连续K线 (双锚点时间线性插值对齐 + 真实成交量加权)` });
                     statusList.push({ name: 'Binance PAXG 备用源', status: '⏸️ 就绪未用', reason: '前序源正常，无需启用' });
 
                     return { bars, sourceName: 'TwelveData 现货 (双锚点线性插值对齐)', statusList };

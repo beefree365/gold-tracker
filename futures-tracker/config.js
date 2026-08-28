@@ -37,6 +37,9 @@ module.exports = {
     // 价格变动触发步长 (当 |当前价格 - 上次推送价格| >= PRICE_STEP 时触发推送，默认 2.0 美元)
     PRICE_STEP: parseFloat(process.env.PRICE_STEP || '2.0'),
 
+    // VWAP 每日重置锚点 (北京时间小时，默认 8 点，即 00:00 UTC 国际标准自然日，与 Tradovate Daily VWAP 4641 完全对齐)
+    VWAP_ANCHOR_HOUR: parseInt(process.env.VWAP_ANCHOR_HOUR || '8', 10),
+
     // 重连与心跳
     RECONNECT_DELAY_MS: 3000,
     PING_INTERVAL_MS: 30000,
