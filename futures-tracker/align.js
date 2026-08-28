@@ -32,7 +32,7 @@ function alignBarsWithDualAnchor(rawBars, currentFuturesPrice, futuresOpen) {
         : latestOffset;
 
     // 3. 沿 24 小时时间轴执行双锚点动态线性插值平滑
-    return rawBars.map(b => {
+    const alignedBars = rawBars.map(b => {
         const ts = new Date(b.timestamp).getTime();
         let offset;
         if (ts <= openTs) {
@@ -51,6 +51,16 @@ function alignBarsWithDualAnchor(rawBars, currentFuturesPrice, futuresOpen) {
             volume: b.volume || 0
         };
     });
+
+    // 4. 实时终点精准咬合: 将最后一根K线的最新收盘价强制咬合为当前的实时期货价
+    if (alignedBars.length > 0 && currentFuturesPrice) {
+        const last = alignedBars[alignedBars.length - 1];
+        last.close = currentFuturesPrice;
+        last.high = Math.max(last.high, currentFuturesPrice);
+        last.low = Math.min(last.low, currentFuturesPrice);
+    }
+
+    return alignedBars;
 }
 
 module.exports = {
