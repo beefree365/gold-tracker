@@ -21,8 +21,7 @@ async function main() {
         process.exit(1);
     }
 
-    const intPrice = Math.floor(cur.price);
-    const buffer = drawKlineChart(bars, cur.price, intPrice, sourceName);
+    const buffer = drawKlineChart(bars, cur.price, 0, 2.0, sourceName);
 
     if (!fs.existsSync(OUTPUT_DIR)) {
         fs.mkdirSync(OUTPUT_DIR, { recursive: true });
