@@ -571,30 +571,8 @@ function connect() {
         isAlive = true;
     });
 
-    ws.on('message', (raw) => {
-        isAlive = true;
+    ws.on('message', async (data) => {
         try {
-            const text = raw.toString().trim();
-            const lines = text.split('\n');
-
-            for (const line of lines) {
-                if (!line.startsWith('hf_GC=')) continue;
-
-                const payload = line.replace('hf_GC=', '');
-                const fields = payload.split(',');
-
-                const price = parseFloat(fields[0]);
-                const bid = parseFloat(fields[2]);
-                const ask = parseFloat(fields[3]);
-                const high = parseFloat(fields[4]);
-                const low = parseFloat(fields[5]);
-                const timeStr = fields[6] || new Date().toLocaleTimeString();
-                const open = parseFloat(fields[8]);
-
-                if (isNaN(price)) continue;
-
-                // 涨跌趋势箭头
-                let trend = ' ';
                 if (lastPrice !== null) {
                     if (price > lastPrice) trend = '🔺';
                     else if (price < lastPrice) trend = '🔻';

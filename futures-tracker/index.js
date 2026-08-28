@@ -155,10 +155,13 @@ function connect() {
     ws.on('message', async (data) => {
         try {
             const rawStr = data.toString('utf-8');
-            const match = rawStr.match(/="([^"]+)"/);
-            if (!match) return;
+            let content = rawStr.trim();
+            if (content.includes('=')) {
+                content = content.substring(content.indexOf('=') + 1);
+            }
+            content = content.replace(/^["']|["';]+$/g, '').trim();
 
-            const fields = match[1].split(',');
+            const fields = content.split(',');
             if (fields.length < 13) return;
 
             const price = parseFloat(fields[0]);
