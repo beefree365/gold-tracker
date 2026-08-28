@@ -8,6 +8,7 @@
         "start:wss-spot": "node wss-spot.js",
         "start:wss-itick": "node wss-itick.js",
         "start:wss-paxg": "node wss-paxg.js",
+        "start:wss-futures": "node wss-futures.js",
         "draw:gcm6-kline": "node scripts/gcm6-kline.js",
         "draw:finnhub-kline": "node scripts/finnhub-kline.js",
         "draw:massive-spot-kline": "node scripts/massive-spot-kline.js",
