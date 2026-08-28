@@ -573,29 +573,49 @@ function connect() {
 
     ws.on('message', async (data) => {
         try {
-                if (lastPrice !== null) {
-                    if (price > lastPrice) trend = '🔺';
-                    else if (price < lastPrice) trend = '🔻';
-                }
-                lastPrice = price;
-
-                const changeAmount = open > 0 ? price - open : 0;
-                const changePercent = open > 0 ? (changeAmount / open) * 100 : 0;
-                const changeStr = (changePercent >= 0 ? '+' : '') + changePercent.toFixed(2) + '%';
-                const bidAskStr = `$${bid.toFixed(2)} / $${ask.toFixed(2)}`;
-
-                console.log(
-                    ` ${timeStr}   ${trend} $${price.toFixed(2).padEnd(10)}  ` +
-                    `${bidAskStr.padEnd(18)}  ` +
-                    `$${open.toFixed(2).padEnd(10)}  ` +
-                    `$${high.toFixed(2).padEnd(10)}  ` +
-                    `$${low.toFixed(2).padEnd(10)}  ` +
-                    `${changeStr}`
-                );
-
-                // 触发 2 的倍数检测与自动绘图推送
-                checkPriceLevel(price, open, high, low, timeStr);
+            const rawStr = data.toString('utf-8');
+            let content = rawStr.trim();
+            if (content.includes('=')) {
+                content = content.substring(content.indexOf('=') + 1);
             }
+            content = content.replace(/^["']|["';]+$/g, '').trim();
+
+            const fields = content.split(',');
+            if (fields.length < 13) return;
+
+            const price = parseFloat(fields[0]);
+            const open = parseFloat(fields[8]);
+            const high = parseFloat(fields[4]);
+            const low = parseFloat(fields[5]);
+            const bid = parseFloat(fields[2]);
+            const ask = parseFloat(fields[3]);
+            const timeStr = fields[6] || new Date().toLocaleTimeString();
+
+            if (isNaN(price)) return;
+
+            let trend = '  ';
+            if (lastPrice !== null) {
+                if (price > lastPrice) trend = '🔺';
+                else if (price < lastPrice) trend = '🔻';
+            }
+            lastPrice = price;
+
+            const changeAmount = open > 0 ? price - open : 0;
+            const changePercent = open > 0 ? (changeAmount / open) * 100 : 0;
+            const changeStr = (changePercent >= 0 ? '+' : '') + changePercent.toFixed(2) + '%';
+            const bidAskStr = `$${bid.toFixed(2)} / $${ask.toFixed(2)}`;
+
+            console.log(
+                ` ${timeStr}   ${trend} $${price.toFixed(2).padEnd(10)}  ` +
+                `${bidAskStr.padEnd(18)}  ` +
+                `$${open.toFixed(2).padEnd(10)}  ` +
+                `$${high.toFixed(2).padEnd(10)}  ` +
+                `$${low.toFixed(2).padEnd(10)}  ` +
+                `${changeStr}`
+            );
+
+            // 触发 2 的倍数检测与自动绘图推送
+            checkPriceLevel(price, open, high, low, timeStr);
         } catch (err) {
             log('❌ 数据解析异常:', err.message);
         }
