@@ -1,7 +1,24 @@
-const { WebSocket } = require('ws');
+require('dotenv').config();
 
-// 新浪 COMEX 纽约黄金期货 WebSocket 行情流 (实时、免 Token)
+const { WebSocket } = require('ws');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { createCanvas } = require('@napi-rs/canvas');
+
+// Polyfill fetch for Node.js
+let fetch;
+if (typeof global.fetch === 'undefined') {
+    const nodeFetch = require('node-fetch');
+    fetch = nodeFetch.default || nodeFetch;
+} else {
+    fetch = global.fetch;
+}
+
+// ---------------- 配置参数 ----------------
 const WS_URL = 'wss://hq.sinajs.cn/wskt?list=hf_GC';
+const DEFAULT_WEBHOOK_URL = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=219fe697-90f0-4d8b-a14d-412a43447d5e';
+const WECOM_WEBHOOK_URL = process.env.WECOM_WEBHOOK_URL || DEFAULT_WEBHOOK_URL;
 const RECONNECT_DELAY_MS = 3000;
 const PING_INTERVAL_MS = 30000;
 
@@ -10,16 +27,358 @@ let reconnectTimer = null;
 let pingTimer = null;
 let isAlive = false;
 let lastPrice = null;
+let lastTriggeredLevel = null; // 记录最后触发的 2 的倍数价格水平
+let isProcessingTrigger = false; // 防并发保护
 
 function log(msg, data) {
     const time = new Date().toLocaleTimeString();
     if (data) {
-        console.log(`[${time}] ${msg}`, data);
+        console.log(`[${time}] ${msg}`, JSON.stringify(data));
     } else {
         console.log(`[${time}] ${msg}`);
     }
 }
 
+// ---------------- 1. 获取 24 小时 1 分钟 K 线数据 ----------------
+async function fetchLast24HoursKline() {
+    // 方案 A: 优先使用 Massive.com 获取真正的 GCM6 期货 1440 条 1分钟K线
+    const massiveToken = process.env.MASSIVE_TOKEN;
+    if (massiveToken) {
+        try {
+            log('正在从 Massive 获取最近 24 小时 (1440条) 期货 1分钟K线...');
+            const url = new URL('https://api.massive.com/futures/v1/aggs/GCM6');
+            url.searchParams.set('resolution', '1min');
+            url.searchParams.set('limit', '1440');
+            url.searchParams.set('sort', 'window_start.desc');
+
+            const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${massiveToken}` }
+            });
+            if (res.ok) {
+                const payload = await res.json();
+                if (Array.isArray(payload.results) && payload.results.length > 0) {
+                    const bars = payload.results.map(r => {
+                        const ts = typeof r.window_start === 'number'
+                            ? (r.window_start > 1e12 ? r.window_start / 1e6 : r.window_start)
+                            : new Date(r.window_start).getTime();
+                        return {
+                            timestamp: new Date(ts).toISOString(),
+                            open: Number(r.open),
+                            high: Number(r.high),
+                            low: Number(r.low),
+                            close: Number(r.close),
+                            volume: Number(r.volume || 0)
+                        };
+                    }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                    log(`✓ 成功获取 Massive 期货 K 线 ${bars.length} 根`);
+                    return bars;
+                }
+            }
+        } catch (e) {
+            log('⚠️ 从 Massive 获取 K 线失败，尝试备用源:', e.message);
+        }
+    }
+
+    // 方案 B: 备用源 —— 币安 PAXG/USDT 1分钟 K 线 (24小时 = 1440条)
+    try {
+        log('正在从币安获取最近 24 小时 (1440条) 1分钟K线...');
+        // 一次获取 1000 条，最近 24h
+        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=1000');
+        if (res.ok) {
+            const list = await res.json();
+            const bars = list.map(item => ({
+                timestamp: new Date(item[0]).toISOString(),
+                open: Number(item[1]),
+                high: Number(item[2]),
+                low: Number(item[3]),
+                close: Number(item[4]),
+                volume: Number(item[5])
+            }));
+            log(`✓ 成功获取币安 K 线 ${bars.length} 根`);
+            return bars;
+        }
+    } catch (e) {
+        log('❌ 获取备用 K 线数据失败:', e.message);
+    }
+
+    return null;
+}
+
+// ---------------- 2. 绘制高质量 24 小时 K 线图 ----------------
+function drawKlineChart(bars, triggerPrice, triggerLevel) {
+    const width = 1800;
+    const height = 850;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    const padLeft = 100;
+    const padRight = 80;
+    const padTop = 80;
+    const padBottom = 80;
+    const chartHeight = height - padTop - padBottom;
+    const chartWidth = width - padLeft - padRight;
+
+    // 1. 深色背景
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, width, height);
+
+    // 2. 顶部标题与触发信息
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText('COMEX 黄金期货 24小时 1分钟 K线图', padLeft, 38);
+
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillText(`🎯 触发价格: $${triggerPrice.toFixed(2)} | 触发水平: $${triggerLevel} (2的倍数)`, padLeft, 68);
+
+    const firstBar = bars[0];
+    const lastBar = bars[bars.length - 1];
+    const formatTime = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(`时间跨度: ${formatTime(firstBar.timestamp)}  ➜  ${formatTime(lastBar.timestamp)}  (共 ${bars.length} 根K线)`, padLeft + 620, 68);
+
+    // 3. 计算价格极值范围
+    const allPrices = bars.flatMap(b => [b.open, b.high, b.low, b.close, triggerPrice]);
+    const minPrice = Math.min(...allPrices);
+    const maxPrice = Math.max(...allPrices);
+    const span = Math.max(1, maxPrice - minPrice);
+    const padding = span * 0.06;
+    const plotMin = minPrice - padding;
+    const plotMax = maxPrice + padding;
+
+    const priceToY = (p) => padTop + chartHeight - ((p - plotMin) / (plotMax - plotMin)) * chartHeight;
+
+    // 4. 绘制水平网格与 Y 轴刻度
+    const gridCount = 6;
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= gridCount; i++) {
+        const y = padTop + (chartHeight / gridCount) * i;
+        ctx.beginPath();
+        ctx.moveTo(padLeft, y);
+        ctx.lineTo(width - padRight, y);
+        ctx.stroke();
+
+        const priceLabel = (plotMax - ((plotMax - plotMin) / gridCount) * i).toFixed(2);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`$${priceLabel}`, padLeft - 12, y + 4);
+    }
+
+    // 5. 绘制触发价格水平线（金色虚线）
+    const triggerY = priceToY(triggerPrice);
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padLeft, triggerY);
+    ctx.lineTo(width - padRight, triggerY);
+    ctx.stroke();
+    ctx.setLineDash([]); // 恢复实线
+
+    // 触发线右侧价格标签
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(width - padRight + 6, triggerY - 11, 70, 22);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`$${triggerPrice.toFixed(2)}`, width - padRight + 12, triggerY + 4);
+
+    // 6. 绘制 K 线蜡烛图
+    const count = bars.length;
+    const candleWidth = Math.max(1, (chartWidth / count) * 0.7);
+    const labelStep = Math.max(1, Math.floor(count / 12)); // 时间标签间隔
+
+    for (let i = 0; i < count; i++) {
+        const bar = bars[i];
+        const x = padLeft + (i + 0.5) * (chartWidth / count);
+        const openY = priceToY(bar.open);
+        const closeY = priceToY(bar.close);
+        const highY = priceToY(bar.high);
+        const lowY = priceToY(bar.low);
+
+        const isUp = bar.close >= bar.open;
+        const color = isUp ? '#22c55e' : '#ef4444';
+
+        // 影线
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+
+        // 实体
+        ctx.fillStyle = color;
+        const bodyTop = Math.min(openY, closeY);
+        const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
+        ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+
+        // 时间轴标签
+        if (i % labelStep === 0 || i === count - 1) {
+            ctx.strokeStyle = '#334155';
+            ctx.beginPath();
+            ctx.moveTo(x, padTop + chartHeight);
+            ctx.lineTo(x, padTop + chartHeight + 6);
+            ctx.stroke();
+
+            const timeStr = new Date(bar.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(timeStr, x, height - 55);
+        }
+    }
+
+    // 7. 底部图例
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(padLeft, height - 30, 12, 12);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '13px sans-serif';
+    ctx.fillText('上涨 (Up)', padLeft + 18, height - 20);
+
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(padLeft + 120, height - 30, 12, 12);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText('下跌 (Down)', padLeft + 138, height - 20);
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(padLeft + 240, height - 30, 20, 3);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(`触发水平线 ($${triggerLevel})`, padLeft + 268, height - 20);
+
+    return canvas.toBuffer('image/png');
+}
+
+// ---------------- 3. 推送企业微信 Webhook ----------------
+async function sendToWeCom({ price, level, open, high, low, timeStr, imageBuffer }) {
+    if (!WECOM_WEBHOOK_URL) {
+        log('⚠️ 未配置 WECOM_WEBHOOK_URL，跳过企业微信推送');
+        return;
+    }
+
+    try {
+        log('📤 正在向企业微信机器人推送消息...');
+
+        const change = open > 0 ? (((price - open) / open) * 100).toFixed(2) : '0.00';
+        const changeSign = change >= 0 ? '+' : '';
+        const trendEmoji = price >= open ? '📈' : '📉';
+
+        // 1. 发送 Markdown 卡片消息
+        const markdownContent = [
+            `### 🔔 COMEX 黄金期货价格触发提醒 ${trendEmoji}`,
+            `> **触发价格**：<font color="warning">**$${price.toFixed(2)}**</font>`,
+            `> **触发水平**：**$${level}** (2的倍数)`,
+            `> **行情时间**：${timeStr}`,
+            `> **今日开盘**：$${open.toFixed(2)} (涨跌: ${changeSign}${change}%)`,
+            `> **今日区间**：$${low.toFixed(2)} ~ $${high.toFixed(2)}`,
+            `> **K线状态**：已生成最近 24 小时 1 分钟走势图 (如下)`
+        ].join('\n');
+
+        const textRes = await fetch(WECOM_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                msgtype: 'markdown',
+                markdown: { content: markdownContent }
+            })
+        });
+        const textJson = await textRes.json();
+        log('✓ 企微文字消息已发送:', textJson);
+
+        // 2. 发送图片消息 (base64 + md5)
+        if (imageBuffer) {
+            const md5 = crypto.createHash('md5').update(imageBuffer).digest('hex');
+            const base64 = imageBuffer.toString('base64');
+
+            const imgRes = await fetch(WECOM_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    msgtype: 'image',
+                    image: { base64, md5 }
+                })
+            });
+            const imgJson = await imgRes.json();
+            log('✓ 企微 K 线图片已发送:', imgJson);
+        }
+    } catch (err) {
+        log('❌ 企业微信推送失败:', err.message);
+    }
+}
+
+// ---------------- 4. 价格 2 的倍数触发处理逻辑 ----------------
+async function checkPriceLevel(currentPrice, open, high, low, timeStr) {
+    const integerPrice = Math.floor(currentPrice);
+
+    // 判断整数部分是否为 2 的倍数
+    if (integerPrice % 2 !== 0) {
+        return;
+    }
+
+    const currentLevel = integerPrice;
+
+    // 同一水平不重复触发
+    if (currentLevel === lastTriggeredLevel) {
+        return;
+    }
+
+    if (isProcessingTrigger) {
+        return;
+    }
+
+    lastTriggeredLevel = currentLevel;
+    isProcessingTrigger = true;
+
+    try {
+        console.log('\n================================================================================');
+        log(`🎯 【价格触发 2 的倍数】当前价格: $${currentPrice.toFixed(2)} | 触发水平: $${currentLevel}`);
+        console.log('================================================================================\n');
+
+        // 1. 获取 24 小时 K 线
+        const bars = await fetchLast24HoursKline();
+        let imageBuffer = null;
+
+        if (bars && bars.length > 0) {
+            // 2. 绘制 K 线图
+            imageBuffer = drawKlineChart(bars, currentPrice, currentLevel);
+
+            // 保存本地图片
+            const chartsDir = path.join(__dirname, 'output', 'charts');
+            if (!fs.existsSync(chartsDir)) {
+                fs.mkdirSync(chartsDir, { recursive: true });
+            }
+            const timeTag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const filePath = path.join(chartsDir, `futures-trigger-${currentLevel}-${timeTag}.png`);
+            fs.writeFileSync(filePath, imageBuffer);
+            log(`💾 K 线图已保存到本地: ${filePath}`);
+        } else {
+            log('⚠️ 未获取到 K 线数据，将仅推送文字消息');
+        }
+
+        // 3. 推送企业微信
+        await sendToWeCom({
+            price: currentPrice,
+            level: currentLevel,
+            open,
+            high,
+            low,
+            timeStr,
+            imageBuffer
+        });
+
+    } catch (err) {
+        log('❌ 触发处理流程异常:', err.message);
+    } finally {
+        isProcessingTrigger = false;
+    }
+}
+
+// ---------------- 5. WebSocket 连接与行情监听 ----------------
 function connect() {
     log(`正在连接 COMEX 黄金期货实时 WebSocket: ${WS_URL}`);
 
@@ -32,8 +391,9 @@ function connect() {
 
     ws.on('open', () => {
         isAlive = true;
-        log('✅ 成功连接到 COMEX 纽约黄金期货实时行情流！\n');
-        console.log('---------------------------------------------------------------------------------------------------------------');
+        log('✅ 成功连接到 COMEX 纽约黄金期货实时行情流！');
+        log(`📢 企业微信推送 Webhook 已配置: ${WECOM_WEBHOOK_URL.slice(0, 50)}...`);
+        console.log('\n---------------------------------------------------------------------------------------------------------------');
         console.log('   时间        最新价格 ($)   买一 / 卖一 ($)       今日开盘       今日最高       今日最低      当日涨跌幅');
         console.log('---------------------------------------------------------------------------------------------------------------');
 
@@ -67,16 +427,6 @@ function connect() {
                 const payload = line.replace('hf_GC=', '');
                 const fields = payload.split(',');
 
-                // 字段说明:
-                // fields[0]: 最新成交价
-                // fields[2]: 买一价
-                // fields[3]: 卖一价
-                // fields[4]: 今日最高价
-                // fields[5]: 今日最低价
-                // fields[6]: 撮合时间 (HH:mm:ss)
-                // fields[7]: 昨结算/昨收
-                // fields[8]: 今日开盘价
-                // fields[12]: 日期 (YYYY-MM-DD)
                 const price = parseFloat(fields[0]);
                 const bid = parseFloat(fields[2]);
                 const ask = parseFloat(fields[3]);
@@ -95,7 +445,6 @@ function connect() {
                 }
                 lastPrice = price;
 
-                // 计算相对于今日开盘的涨跌幅
                 const changeAmount = open > 0 ? price - open : 0;
                 const changePercent = open > 0 ? (changeAmount / open) * 100 : 0;
                 const changeStr = (changePercent >= 0 ? '+' : '') + changePercent.toFixed(2) + '%';
@@ -109,6 +458,9 @@ function connect() {
                     `$${low.toFixed(2).padEnd(10)}  ` +
                     `${changeStr}`
                 );
+
+                // 触发 2 的倍数检测与自动绘图推送
+                checkPriceLevel(price, open, high, low, timeStr);
             }
         } catch (err) {
             log('❌ 数据解析异常:', err.message);
