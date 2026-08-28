@@ -6,6 +6,7 @@ const {
     WS_URL,
     RECONNECT_DELAY_MS,
     PING_INTERVAL_MS,
+    SAVE_LOCAL_IMAGE,
     OUTPUT_DIR,
     LATEST_IMAGE_PATH,
     WECOM_WEBHOOK_URL
@@ -78,24 +79,18 @@ async function handlePriceTrigger(currentPrice, open, high, low, timeStr) {
         console.log('└────────────────────────────────────────────────────────────────────────────────┘\n');
 
         if (bars && bars.length > 0) {
-            // 2. 绘制高质量 5 分钟 K 线图
+            // 2. 绘制高质量 5 分钟 K 线图 (纯内存 Buffer，不写入本地磁盘)
             imageBuffer = drawKlineChart(bars, currentPrice, currentLevel, sourceName);
 
-            // 3. 本地多路径自动保存
-            ensureOutputDir();
-            const timeTag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const historyPath = path.join(OUTPUT_DIR, `futures-trigger-5m-${currentLevel}-${timeTag}.png`);
-            const latestModulePath = LATEST_IMAGE_PATH;
-            const rootLatestPath = path.join(__dirname, '..', 'futures-5m-kline-latest.png');
-
-            fs.writeFileSync(historyPath, imageBuffer);
-            fs.writeFileSync(latestModulePath, imageBuffer);
-            try { fs.writeFileSync(rootLatestPath, imageBuffer); } catch (e) {}
-
-            log(`💾 5分钟 K 线图已保存至本地:`);
-            log(`   ├─ 历史归档: ${historyPath}`);
-            log(`   ├─ 模块最新: ${latestModulePath}`);
-            log(`   └─ 根目录:   ${rootLatestPath}`);
+            // 3. 本地保存 (已默认禁用)
+            if (SAVE_LOCAL_IMAGE) {
+                ensureOutputDir();
+                const timeTag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const historyPath = path.join(OUTPUT_DIR, `futures-trigger-5m-${currentLevel}-${timeTag}.png`);
+                fs.writeFileSync(historyPath, imageBuffer);
+                fs.writeFileSync(LATEST_IMAGE_PATH, imageBuffer);
+                log(`💾 5分钟 K 线图已保存至本地: ${historyPath}`);
+            }
         } else {
             log('⚠️ 未获取到 K 线数据，将仅推送文字消息');
         }

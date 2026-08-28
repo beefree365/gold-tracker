@@ -36,7 +36,10 @@ module.exports = {
     RECONNECT_DELAY_MS: 3000,
     PING_INTERVAL_MS: 30000,
 
-    // 输出目录
+    // 是否保存图片到本地 (false 表示纯内存生成并推送企微，不写入本地磁盘)
+    SAVE_LOCAL_IMAGE: false,
+
+    // 输出目录 (如需开启本地保存时生效)
     OUTPUT_DIR: path.join(__dirname, 'output'),
     LATEST_IMAGE_PATH: path.join(__dirname, 'latest-futures-5m-kline.png')
 };
