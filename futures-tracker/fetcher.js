@@ -107,6 +107,7 @@ async function fetch24Hours5MinKline(currentFuturesPrice, futuresOpen) {
             url.searchParams.set('symbol', 'XAU/USD');
             url.searchParams.set('interval', '5min');
             url.searchParams.set('outputsize', '288');
+            url.searchParams.set('timezone', 'UTC'); // 明确指定 UTC 时区，彻底杜绝 10 小时时区偏差
             url.searchParams.set('apikey', TWELVE_TOKEN);
 
             const res = await fetch(url.toString());
