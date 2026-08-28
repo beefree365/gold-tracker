@@ -20,7 +20,9 @@ module.exports = {
 
     // 企业微信 Webhook
     DEFAULT_WEBHOOK_URL: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=219fe697-90f0-4d8b-a14d-412a43447d5e',
-    WECOM_WEBHOOK_URL: process.env.WECOM_WEBHOOK_URL || 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=219fe697-90f0-4d8b-a14d-412a43447d5e',
+    WECOM_WEBHOOK_URL: (process.env.WECOM_WEBHOOK_URL && process.env.WECOM_WEBHOOK_URL.trim() !== '' && !process.env.WECOM_WEBHOOK_URL.includes('your_'))
+        ? process.env.WECOM_WEBHOOK_URL.trim()
+        : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=219fe697-90f0-4d8b-a14d-412a43447d5e',
 
     // API Tokens
     MASSIVE_TOKEN: process.env.MASSIVE_TOKEN,
