@@ -4,7 +4,7 @@ const { WebSocket } = require('ws');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 
 // Polyfill fetch for Node.js
 let fetch;
@@ -14,6 +14,35 @@ if (typeof global.fetch === 'undefined') {
 } else {
     fetch = global.fetch;
 }
+
+// ---------------- 注册中文字体 (彻底解决 Canvas 中文乱码) ----------------
+function initChineseFonts() {
+    const candidatePaths = [
+        'C:/Windows/Fonts/msyh.ttc',    // Windows 微软雅黑
+        'C:/Windows/Fonts/msyhbd.ttc',  // Windows 微软雅黑粗体
+        'C:/Windows/Fonts/simhei.ttf',  // Windows 黑体
+        'C:/Windows/Fonts/simsun.ttc',  // Windows 宋体
+        '/System/Library/Fonts/PingFang.ttc', // macOS 苹方
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' // Linux 文泉驿
+    ];
+
+    let registered = false;
+    for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+            try {
+                GlobalFonts.registerFromPath(p, 'ChineseFont');
+                registered = true;
+                break;
+            } catch (e) {
+                // 尝试下一个
+            }
+        }
+    }
+    return registered;
+}
+
+initChineseFonts();
+const FONT_FAMILY = 'ChineseFont, "Microsoft YaHei", "PingFang SC", "SimHei", sans-serif';
 
 // ---------------- 配置参数 ----------------
 const WS_URL = 'wss://hq.sinajs.cn/wskt?list=hf_GC';
@@ -39,16 +68,16 @@ function log(msg, data) {
     }
 }
 
-// ---------------- 1. 获取 24 小时 1 分钟 K 线数据 ----------------
-async function fetchLast24HoursKline() {
-    // 方案 A: 优先使用 Massive.com 获取真正的 GCM6 期货 1440 条 1分钟K线
+// ---------------- 1. 获取 24 小时 5 分钟 K 线数据 (288 根) ----------------
+async function fetchLast24Hours5MinKline() {
+    // 方案 A: 优先使用 Massive.com 获取真正的 GCM6 期货 5分钟K线
     const massiveToken = process.env.MASSIVE_TOKEN;
     if (massiveToken) {
         try {
-            log('正在从 Massive 获取最近 24 小时 (1440条) 期货 1分钟K线...');
+            log('正在从 Massive 获取最近 24 小时 (288条) 期货 5分钟K线...');
             const url = new URL('https://api.massive.com/futures/v1/aggs/GCM6');
-            url.searchParams.set('resolution', '1min');
-            url.searchParams.set('limit', '1440');
+            url.searchParams.set('resolution', '5min');
+            url.searchParams.set('limit', '300');
             url.searchParams.set('sort', 'window_start.desc');
 
             const res = await fetch(url.toString(), {
@@ -71,20 +100,19 @@ async function fetchLast24HoursKline() {
                         };
                     }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-                    log(`✓ 成功获取 Massive 期货 K 线 ${bars.length} 根`);
+                    log(`✓ 成功获取 Massive 期货 5分钟K线 ${bars.length} 根`);
                     return bars;
                 }
             }
         } catch (e) {
-            log('⚠️ 从 Massive 获取 K 线失败，尝试备用源:', e.message);
+            log('⚠️ 从 Massive 获取 5分钟K线失败，尝试备用源:', e.message);
         }
     }
 
-    // 方案 B: 备用源 —— 币安 PAXG/USDT 1分钟 K 线 (24小时 = 1440条)
+    // 方案 B: 备用源 —— 币安 PAXG/USDT 5分钟 K 线 (24小时 = 288条)
     try {
-        log('正在从币安获取最近 24 小时 (1440条) 1分钟K线...');
-        // 一次获取 1000 条，最近 24h
-        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=1000');
+        log('正在从币安获取最近 24 小时 (288条) 5分钟K线...');
+        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=5m&limit=288');
         if (res.ok) {
             const list = await res.json();
             const bars = list.map(item => ({
@@ -95,7 +123,7 @@ async function fetchLast24HoursKline() {
                 close: Number(item[4]),
                 volume: Number(item[5])
             }));
-            log(`✓ 成功获取币安 K 线 ${bars.length} 根`);
+            log(`✓ 成功获取币安 5分钟K线 ${bars.length} 根`);
             return bars;
         }
     } catch (e) {
@@ -105,7 +133,7 @@ async function fetchLast24HoursKline() {
     return null;
 }
 
-// ---------------- 2. 绘制高质量 24 小时 K 线图 ----------------
+// ---------------- 2. 绘制高质量 24 小时 5分钟 K 线图 ----------------
 function drawKlineChart(bars, triggerPrice, triggerLevel) {
     const width = 1800;
     const height = 850;
@@ -119,27 +147,26 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
     const chartHeight = height - padTop - padBottom;
     const chartWidth = width - padLeft - padRight;
 
-    // 1. 亮色背景 (白色主画布 + 极简淡灰网格区)
+    // 1. 亮色背景 (白色主画布 + 极简浅灰绘图区)
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
 
-    // 绘制图表主体区域浅灰背景
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(padLeft, padTop, chartWidth, chartHeight);
 
-    // 2. 顶部标题与触发信息 (深色清晰文字)
+    // 2. 顶部标题与触发信息 (加载注册的中文字体)
     ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 26px sans-serif';
-    ctx.fillText('COMEX 黄金期货 24小时 1分钟 K线图', padLeft, 38);
+    ctx.font = `bold 26px ${FONT_FAMILY}`;
+    ctx.fillText('COMEX 黄金期货 24小时 5分钟 K线图', padLeft, 38);
 
-    ctx.font = '16px sans-serif';
-    ctx.fillStyle = '#d97706'; // 亮色下清晰的高对比度琥珀金
+    ctx.font = `16px ${FONT_FAMILY}`;
+    ctx.fillStyle = '#d97706'; // 高对比度琥珀金
     ctx.fillText(`🎯 触发价格: $${triggerPrice.toFixed(2)} | 触发水平: $${triggerLevel} (2的倍数)`, padLeft, 68);
 
     const firstBar = bars[0];
     const lastBar = bars[bars.length - 1];
     const formatTime = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-    ctx.font = '14px sans-serif';
+    ctx.font = `14px ${FONT_FAMILY}`;
     ctx.fillStyle = '#64748b';
     ctx.fillText(`时间跨度: ${formatTime(firstBar.timestamp)}  ➜  ${formatTime(lastBar.timestamp)}  (共 ${bars.length} 根K线)`, padLeft + 620, 68);
 
@@ -156,7 +183,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
 
     // 4. 绘制水平网格与 Y 轴刻度
     const gridCount = 6;
-    ctx.strokeStyle = '#e2e8f0'; // 浅灰网格线
+    ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 1;
     for (let i = 0; i <= gridCount; i++) {
         const y = padTop + (chartHeight / gridCount) * i;
@@ -167,7 +194,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
 
         const priceLabel = (plotMax - ((plotMax - plotMin) / gridCount) * i).toFixed(2);
         ctx.fillStyle = '#475569';
-        ctx.font = '12px sans-serif';
+        ctx.font = `12px ${FONT_FAMILY}`;
         ctx.textAlign = 'right';
         ctx.fillText(`$${priceLabel}`, padLeft - 12, y + 4);
     }
@@ -177,7 +204,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
     ctx.lineWidth = 1;
     ctx.strokeRect(padLeft, padTop, chartWidth, chartHeight);
 
-    // 5. 绘制触发价格水平线（琥珀金色虚线）
+    // 5. 绘制触发价格水平线（金色虚线）
     const triggerY = priceToY(triggerPrice);
     ctx.strokeStyle = '#d97706';
     ctx.lineWidth = 1.5;
@@ -192,14 +219,14 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
     ctx.fillStyle = '#d97706';
     ctx.fillRect(width - padRight + 6, triggerY - 11, 70, 22);
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 12px sans-serif';
+    ctx.font = `bold 12px ${FONT_FAMILY}`;
     ctx.textAlign = 'left';
     ctx.fillText(`$${triggerPrice.toFixed(2)}`, width - padRight + 12, triggerY + 4);
 
-    // 6. 绘制 K 线蜡烛图
+    // 6. 绘制 K 线蜡烛图 (5分钟K线约 288 根，每根更清晰)
     const count = bars.length;
-    const candleWidth = Math.max(1, (chartWidth / count) * 0.7);
-    const labelStep = Math.max(1, Math.floor(count / 12)); // 时间标签间隔
+    const candleWidth = Math.max(2, (chartWidth / count) * 0.72);
+    const labelStep = Math.max(1, Math.floor(count / 12)); // 时间标签间隔 (约每 2 小时一标)
 
     for (let i = 0; i < count; i++) {
         const bar = bars[i];
@@ -210,11 +237,11 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
         const lowY = priceToY(bar.low);
 
         const isUp = bar.close >= bar.open;
-        const color = isUp ? '#16a34a' : '#dc2626'; // 亮色下清晰的红绿配色
+        const color = isUp ? '#16a34a' : '#dc2626';
 
         // 影线
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(x, highY);
         ctx.lineTo(x, lowY);
@@ -236,7 +263,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
 
             const timeStr = new Date(bar.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
             ctx.fillStyle = '#475569';
-            ctx.font = '11px sans-serif';
+            ctx.font = `11px ${FONT_FAMILY}`;
             ctx.textAlign = 'center';
             ctx.fillText(timeStr, x, height - 55);
         }
@@ -247,7 +274,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
     ctx.fillStyle = '#16a34a';
     ctx.fillRect(padLeft, height - 30, 12, 12);
     ctx.fillStyle = '#334155';
-    ctx.font = '13px sans-serif';
+    ctx.font = `13px ${FONT_FAMILY}`;
     ctx.fillText('上涨 (Up)', padLeft + 18, height - 20);
 
     ctx.fillStyle = '#dc2626';
@@ -285,7 +312,7 @@ async function sendToWeCom({ price, level, open, high, low, timeStr, imageBuffer
             `> **行情时间**：${timeStr}`,
             `> **今日开盘**：$${open.toFixed(2)} (涨跌: ${changeSign}${change}%)`,
             `> **今日区间**：$${low.toFixed(2)} ~ $${high.toFixed(2)}`,
-            `> **K线状态**：已生成最近 24 小时 1 分钟走势图 (如下)`
+            `> **K线状态**：已生成最近 24 小时 5 分钟走势图 (如下)`
         ].join('\n');
 
         const textRes = await fetch(WECOM_WEBHOOK_URL, {
@@ -348,12 +375,12 @@ async function checkPriceLevel(currentPrice, open, high, low, timeStr) {
         log(`🎯 【价格触发 2 的倍数】当前价格: $${currentPrice.toFixed(2)} | 触发水平: $${currentLevel}`);
         console.log('================================================================================\n');
 
-        // 1. 获取 24 小时 K 线
-        const bars = await fetchLast24HoursKline();
+        // 1. 获取 24 小时 5分钟 K 线
+        const bars = await fetchLast24Hours5MinKline();
         let imageBuffer = null;
 
         if (bars && bars.length > 0) {
-            // 2. 绘制 K 线图
+            // 2. 绘制 5分钟 K 线图
             imageBuffer = drawKlineChart(bars, currentPrice, currentLevel);
 
             // 保存本地图片
@@ -362,9 +389,9 @@ async function checkPriceLevel(currentPrice, open, high, low, timeStr) {
                 fs.mkdirSync(chartsDir, { recursive: true });
             }
             const timeTag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const filePath = path.join(chartsDir, `futures-trigger-${currentLevel}-${timeTag}.png`);
+            const filePath = path.join(chartsDir, `futures-trigger-5m-${currentLevel}-${timeTag}.png`);
             fs.writeFileSync(filePath, imageBuffer);
-            log(`💾 K 线图已保存到本地: ${filePath}`);
+            log(`💾 5分钟 K 线图已保存到本地: ${filePath}`);
         } else {
             log('⚠️ 未获取到 K 线数据，将仅推送文字消息');
         }
