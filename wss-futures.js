@@ -69,53 +69,116 @@ function log(msg, data) {
 }
 
 // ---------------- 1. 获取 24 小时 5 分钟 K 线数据 (288 根) ----------------
-async function fetchLast24Hours5MinKline() {
-    // 方案 A: 优先使用 Massive.com 获取真正的 GCM6 期货 5分钟K线
+async function fetchLast24Hours5MinKline(currentFuturesPrice) {
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    // 方案 A: 优先使用 Massive.com 获取最新活跃主力期货合约 (当前活跃主力: GCZ6 12月合约 / GCV6 10月合约)
     const massiveToken = process.env.MASSIVE_TOKEN;
+    const activeFuturesContracts = ['GCZ6', 'GCV6', 'GCQ6']; // 按主力顺序尝试
+
     if (massiveToken) {
-        try {
-            log('正在从 Massive 获取最近 24 小时 (288条) 期货 5分钟K线...');
-            const url = new URL('https://api.massive.com/futures/v1/aggs/GCM6');
-            url.searchParams.set('resolution', '5min');
-            url.searchParams.set('limit', '300');
-            url.searchParams.set('sort', 'window_start.desc');
+        for (const contract of activeFuturesContracts) {
+            try {
+                log(`正在尝试从 Massive 获取 ${contract} 主力期货 5分钟K线...`);
+                const url = new URL(`https://api.massive.com/futures/v1/aggs/${contract}`);
+                url.searchParams.set('resolution', '5min');
+                url.searchParams.set('limit', '300');
+                url.searchParams.set('sort', 'window_start.desc');
 
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${massiveToken}` }
-            });
-            if (res.ok) {
-                const payload = await res.json();
-                if (Array.isArray(payload.results) && payload.results.length > 0) {
-                    const bars = payload.results.map(r => {
-                        const ts = typeof r.window_start === 'number'
-                            ? (r.window_start > 1e12 ? r.window_start / 1e6 : r.window_start)
-                            : new Date(r.window_start).getTime();
-                        return {
-                            timestamp: new Date(ts).toISOString(),
-                            open: Number(r.open),
-                            high: Number(r.high),
-                            low: Number(r.low),
-                            close: Number(r.close),
-                            volume: Number(r.volume || 0)
-                        };
-                    }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                const res = await fetch(url.toString(), {
+                    headers: { Authorization: `Bearer ${massiveToken}` }
+                });
+                if (res.ok) {
+                    const payload = await res.json();
+                    if (Array.isArray(payload.results) && payload.results.length > 0) {
+                        const latestTs = payload.results[0].window_start > 1e12 
+                            ? payload.results[0].window_start / 1e6 
+                            : payload.results[0].window_start;
+                        
+                        // 检查数据是否在最近 24 小时内 (防止过期合约)
+                        if (now - latestTs < ONE_DAY_MS) {
+                            const bars = payload.results.map(r => {
+                                const ts = typeof r.window_start === 'number'
+                                    ? (r.window_start > 1e12 ? r.window_start / 1e6 : r.window_start)
+                                    : new Date(r.window_start).getTime();
+                                return {
+                                    timestamp: new Date(ts).toISOString(),
+                                    open: Number(r.open),
+                                    high: Number(r.high),
+                                    low: Number(r.low),
+                                    close: Number(r.close),
+                                    volume: Number(r.volume || 0)
+                                };
+                            }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-                    log(`✓ 成功获取 Massive 期货 5分钟K线 ${bars.length} 根`);
-                    return bars;
+                            log(`✓ 成功获取 Massive ${contract} 最新活跃期货 K 线 ${bars.length} 根`);
+                            return bars;
+                        } else {
+                            log(`⚠️ ${contract} 合约已到期或数据非最新 (${new Date(latestTs).toLocaleDateString()})，尝试下一个源`);
+                        }
+                    }
                 }
+            } catch (e) {
+                log(`⚠️ Massive ${contract} 获取失败:`, e.message);
             }
-        } catch (e) {
-            log('⚠️ 从 Massive 获取 5分钟K线失败，尝试备用源:', e.message);
         }
     }
 
-    // 方案 B: 备用源 —— 币安 PAXG/USDT 5分钟 K 线 (24小时 = 288条)
+    // 方案 B: 使用 TwelveData 现货 5分钟 K 线 (288 根连续数据)
+    const twelveToken = process.env.TWELVE_TOKEN;
+    if (twelveToken) {
+        try {
+            log('正在从 TwelveData 获取最近 24 小时 (288条) 5分钟K线...');
+            const url = new URL('https://api.twelvedata.com/time_series');
+            url.searchParams.set('symbol', 'XAU/USD');
+            url.searchParams.set('interval', '5min');
+            url.searchParams.set('outputsize', '288');
+            url.searchParams.set('apikey', twelveToken);
+
+            const res = await fetch(url.toString());
+            if (res.ok) {
+                const payload = await res.json();
+                if (Array.isArray(payload.values) && payload.values.length > 0) {
+                    const rawBars = payload.values.map(r => ({
+                        timestamp: new Date(`${r.datetime.replace(' ', 'T')}Z`).toISOString(),
+                        open: Number(r.open),
+                        high: Number(r.high),
+                        low: Number(r.low),
+                        close: Number(r.close),
+                        volume: 0
+                    })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                    // 基准对齐：若当前有期货最新价，将走势基准平移至期货实时价格，确保完美连续
+                    if (currentFuturesPrice && rawBars.length > 0) {
+                        const offset = currentFuturesPrice - rawBars[rawBars.length - 1].close;
+                        const alignedBars = rawBars.map(b => ({
+                            ...b,
+                            open: b.open + offset,
+                            high: b.high + offset,
+                            low: b.low + offset,
+                            close: b.close + offset
+                        }));
+                        log(`✓ 成功获取 TwelveData K 线 ${alignedBars.length} 根 (已与期货现价对齐)`);
+                        return alignedBars;
+                    }
+
+                    log(`✓ 成功获取 TwelveData K 线 ${rawBars.length} 根`);
+                    return rawBars;
+                }
+            }
+        } catch (e) {
+            log('⚠️ TwelveData 获取失败，尝试备用源:', e.message);
+        }
+    }
+
+    // 方案 C: 备用源 —— 币安 PAXG/USDT 5分钟 K 线 (24小时 = 288条，免Token且永远连续)
     try {
         log('正在从币安获取最近 24 小时 (288条) 5分钟K线...');
         const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=5m&limit=288');
         if (res.ok) {
             const list = await res.json();
-            const bars = list.map(item => ({
+            const rawBars = list.map(item => ({
                 timestamp: new Date(item[0]).toISOString(),
                 open: Number(item[1]),
                 high: Number(item[2]),
@@ -123,8 +186,23 @@ async function fetchLast24Hours5MinKline() {
                 close: Number(item[4]),
                 volume: Number(item[5])
             }));
-            log(`✓ 成功获取币安 5分钟K线 ${bars.length} 根`);
-            return bars;
+
+            // 基准对齐
+            if (currentFuturesPrice && rawBars.length > 0) {
+                const offset = currentFuturesPrice - rawBars[rawBars.length - 1].close;
+                const alignedBars = rawBars.map(b => ({
+                    ...b,
+                    open: b.open + offset,
+                    high: b.high + offset,
+                    low: b.low + offset,
+                    close: b.close + offset
+                }));
+                log(`✓ 成功获取币安 5分钟K线 ${alignedBars.length} 根 (已与期货现价对齐)`);
+                return alignedBars;
+            }
+
+            log(`✓ 成功获取币安 5分钟K线 ${rawBars.length} 根`);
+            return rawBars;
         }
     } catch (e) {
         log('❌ 获取备用 K 线数据失败:', e.message);
@@ -376,7 +454,7 @@ async function checkPriceLevel(currentPrice, open, high, low, timeStr) {
         console.log('================================================================================\n');
 
         // 1. 获取 24 小时 5分钟 K 线
-        const bars = await fetchLast24Hours5MinKline();
+        const bars = await fetchLast24Hours5MinKline(currentPrice);
         let imageBuffer = null;
 
         if (bars && bars.length > 0) {
