@@ -118,68 +118,87 @@ function drawKlineChart(bars, triggerPrice, priceDiff, priceStep, sourceName) {
 
     const count = bars.length;
 
-    // 6. 绘制 VWAP 标准差轨道带阴影填充与线条
+    // 6. 绘制 VWAP 标准差轨道带阴影填充与线条 (按交易会话分段渲染，支持 06:00 每日重置)
     if (vwapData.length === count && count > 1) {
-        // A. 绘制 +-2σ 外部阴影带
-        ctx.fillStyle = 'rgba(139, 92, 246, 0.04)';
-        ctx.beginPath();
+        // 按会话切分片段
+        const segments = [];
+        let currentSegment = [];
         for (let i = 0; i < count; i++) {
-            const x = padLeft + (i + 0.5) * (chartWidth / count);
-            const y = priceToY(vwapData[i].upper2);
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
+            if (vwapData[i].isNewSession && currentSegment.length > 0) {
+                segments.push(currentSegment);
+                currentSegment = [];
+            }
+            currentSegment.push({ index: i, data: vwapData[i] });
         }
-        for (let i = count - 1; i >= 0; i--) {
-            const x = padLeft + (i + 0.5) * (chartWidth / count);
-            const y = priceToY(vwapData[i].lower2);
-            ctx.lineTo(x, y);
+        if (currentSegment.length > 0) {
+            segments.push(currentSegment);
         }
-        ctx.closePath();
-        ctx.fill();
 
-        // B. 绘制 +-1σ 内部核心阴影带
-        ctx.fillStyle = 'rgba(139, 92, 246, 0.08)';
-        ctx.beginPath();
-        for (let i = 0; i < count; i++) {
-            const x = padLeft + (i + 0.5) * (chartWidth / count);
-            const y = priceToY(vwapData[i].upper1);
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        for (let i = count - 1; i >= 0; i--) {
-            const x = padLeft + (i + 0.5) * (chartWidth / count);
-            const y = priceToY(vwapData[i].lower1);
-            ctx.lineTo(x, y);
-        }
-        ctx.closePath();
-        ctx.fill();
+        // 针对每个独立会话片段分别绘制阴影和线条
+        for (const seg of segments) {
+            if (seg.length < 2) continue;
 
-        // C. 辅助函数：绘制平滑轨道线
-        const drawLine = (getY, color, lineWidth, dash) => {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = lineWidth;
-            ctx.setLineDash(dash || []);
+            // A. 绘制 +-2σ 外部阴影带
+            ctx.fillStyle = 'rgba(139, 92, 246, 0.04)';
             ctx.beginPath();
-            for (let i = 0; i < count; i++) {
-                const x = padLeft + (i + 0.5) * (chartWidth / count);
-                const y = priceToY(getY(vwapData[i]));
-                if (i === 0) ctx.moveTo(x, y);
+            for (let j = 0; j < seg.length; j++) {
+                const x = padLeft + (seg[j].index + 0.5) * (chartWidth / count);
+                const y = priceToY(seg[j].data.upper2);
+                if (j === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
-            ctx.stroke();
-            ctx.setLineDash([]);
-        };
+            for (let j = seg.length - 1; j >= 0; j--) {
+                const x = padLeft + (seg[j].index + 0.5) * (chartWidth / count);
+                const y = priceToY(seg[j].data.lower2);
+                ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fill();
 
-        // 绘制 +-2σ 轨道 (紫色虚线)
-        drawLine(v => v.upper2, '#c084fc', 1.2, [6, 4]);
-        drawLine(v => v.lower2, '#c084fc', 1.2, [6, 4]);
+            // B. 绘制 +-1σ 内部核心阴影带
+            ctx.fillStyle = 'rgba(139, 92, 246, 0.08)';
+            ctx.beginPath();
+            for (let j = 0; j < seg.length; j++) {
+                const x = padLeft + (seg[j].index + 0.5) * (chartWidth / count);
+                const y = priceToY(seg[j].data.upper1);
+                if (j === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            for (let j = seg.length - 1; j >= 0; j--) {
+                const x = padLeft + (seg[j].index + 0.5) * (chartWidth / count);
+                const y = priceToY(seg[j].data.lower1);
+                ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fill();
 
-        // 绘制 +-1σ 轨道 (紫蓝虚线)
-        drawLine(v => v.upper1, '#a855f7', 1.3, [4, 3]);
-        drawLine(v => v.lower1, '#a855f7', 1.3, [4, 3]);
+            // C. 辅助函数：绘制分段线条
+            const drawSegmentLine = (getY, color, lineWidth, dash) => {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = lineWidth;
+                ctx.setLineDash(dash || []);
+                ctx.beginPath();
+                for (let j = 0; j < seg.length; j++) {
+                    const x = padLeft + (seg[j].index + 0.5) * (chartWidth / count);
+                    const y = priceToY(getY(seg[j].data));
+                    if (j === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            };
 
-        // 绘制 VWAP 主均线 (深紫实线)
-        drawLine(v => v.vwap, '#7c3aed', 2.2, []);
+            // 绘制 +-2σ 轨道 (紫色虚线)
+            drawSegmentLine(v => v.upper2, '#c084fc', 1.2, [6, 4]);
+            drawSegmentLine(v => v.lower2, '#c084fc', 1.2, [6, 4]);
+
+            // 绘制 +-1σ 轨道 (紫蓝虚线)
+            drawSegmentLine(v => v.upper1, '#a855f7', 1.3, [4, 3]);
+            drawSegmentLine(v => v.lower1, '#a855f7', 1.3, [4, 3]);
+
+            // 绘制 VWAP 主均线 (深紫实线)
+            drawSegmentLine(v => v.vwap, '#7c3aed', 2.2, []);
+        }
 
         // 最新 VWAP 气泡标签
         if (latestVWAP) {
