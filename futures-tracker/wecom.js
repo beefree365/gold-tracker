@@ -60,6 +60,21 @@ async function sendToWeCom({ price, prevPrice, priceDiff, priceStep, open, high,
             });
             const imgJson = await imgRes.json();
             console.log('✓ 企微 K 线图片已发送:', imgJson);
+
+            // 3. 推送 K 线后，等待 2 秒再次推送一次价格
+            console.log('⏳ 等待 2 秒后再次推送价格...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            const secondTextRes = await fetch(WECOM_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    msgtype: 'text',
+                    text: { content: textContent }
+                })
+            });
+            const secondTextJson = await secondTextRes.json();
+            console.log(`✓ 企微 2 秒后二次价格推送已发送 [${textContent}]:`, secondTextJson);
         }
     } catch (err) {
         console.error('❌ 企业微信推送失败:', err.message);
