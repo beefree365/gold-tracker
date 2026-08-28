@@ -70,7 +70,8 @@ function log(msg, data) {
 
 // ---------------- 1. 获取 24 小时 5 分钟 K 线数据 (288 根) ----------------
 async function fetchLast24Hours5MinKline(currentFuturesPrice) {
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    // 严格检查数据新鲜度: 最新一根 K 线必须在 15 分钟以内，防止盘中未实时更新的滞后历史数据
+    const MAX_STALE_MS = 15 * 60 * 1000;
     const now = Date.now();
 
     // 方案 A: 优先使用 Massive.com 获取最新活跃主力期货合约 (当前活跃主力: GCZ6 12月合约 / GCV6 10月合约)
@@ -96,8 +97,8 @@ async function fetchLast24Hours5MinKline(currentFuturesPrice) {
                             ? payload.results[0].window_start / 1e6 
                             : payload.results[0].window_start;
                         
-                        // 检查数据是否在最近 24 小时内 (防止过期合约)
-                        if (now - latestTs < ONE_DAY_MS) {
+                        // 检查数据是否在最近 15 分钟内 (防止过期合约或未实时更新数据)
+                        if (now - latestTs < MAX_STALE_MS) {
                             const bars = payload.results.map(r => {
                                 const ts = typeof r.window_start === 'number'
                                     ? (r.window_start > 1e12 ? r.window_start / 1e6 : r.window_start)
@@ -115,7 +116,7 @@ async function fetchLast24Hours5MinKline(currentFuturesPrice) {
                             log(`✓ 成功获取 Massive ${contract} 最新活跃期货 K 线 ${bars.length} 根`);
                             return bars;
                         } else {
-                            log(`⚠️ ${contract} 合约已到期或数据非最新 (${new Date(latestTs).toLocaleDateString()})，尝试下一个源`);
+                            log(`⚠️ Massive ${contract} 最新K线停留在 ${new Date(latestTs).toLocaleTimeString()} (非当前盘中实时数据)，切换至毫秒级实时源`);
                         }
                     }
                 }

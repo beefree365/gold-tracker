@@ -59,7 +59,8 @@ async function fetchCurrentFuturesPrice() {
 
 // 2. 获取 24 小时 5 分钟 K 线数据
 async function fetch24Hours5MinKline(currentPrice) {
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    // 严格检查数据新鲜度: 最新一根 K 线必须在 15 分钟以内，防止盘中未更新的滞后历史数据
+    const MAX_STALE_MS = 15 * 60 * 1000;
     const now = Date.now();
 
     // 尝试 Massive 主力合约
@@ -77,7 +78,7 @@ async function fetch24Hours5MinKline(currentPrice) {
                     const json = await res.json();
                     if (Array.isArray(json.results) && json.results.length > 0) {
                         const latestTs = json.results[0].window_start > 1e12 ? json.results[0].window_start / 1e6 : json.results[0].window_start;
-                        if (now - latestTs < ONE_DAY_MS) {
+                        if (now - latestTs < MAX_STALE_MS) {
                             return json.results.map(r => ({
                                 timestamp: new Date(r.window_start > 1e12 ? r.window_start / 1e6 : r.window_start).toISOString(),
                                 open: Number(r.open),
@@ -85,6 +86,8 @@ async function fetch24Hours5MinKline(currentPrice) {
                                 low: Number(r.low),
                                 close: Number(r.close)
                             })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                        } else {
+                            console.log(`⚠️ Massive ${contract} 最新K线停留在 ${new Date(latestTs).toLocaleTimeString()} (非当前盘中实时数据)，自动切换至毫秒级实时源`);
                         }
                     }
                 }
