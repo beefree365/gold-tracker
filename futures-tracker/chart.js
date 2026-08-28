@@ -10,7 +10,13 @@ function initChineseFonts() {
         'C:/Windows/Fonts/simhei.ttf',
         'C:/Windows/Fonts/simsun.ttc',
         '/System/Library/Fonts/PingFang.ttc',
-        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/usr/share/fonts/wqy-microhei/wqy-microhei.ttc',
+        '/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc'
     ];
     for (const p of candidatePaths) {
         if (fs.existsSync(p)) {
