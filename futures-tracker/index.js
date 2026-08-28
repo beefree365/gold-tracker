@@ -6,6 +6,7 @@ const {
     WS_URL,
     RECONNECT_DELAY_MS,
     PING_INTERVAL_MS,
+    PRICE_STEP,
     SAVE_LOCAL_IMAGE,
     OUTPUT_DIR,
     LATEST_IMAGE_PATH,
@@ -20,7 +21,7 @@ let reconnectTimer = null;
 let pingTimer = null;
 let isAlive = false;
 let lastPrice = null;
-let lastTriggeredLevel = null;
+let lastPushedPrice = null; // 记录上次成功推送时的价格
 let isProcessingTrigger = false;
 
 function log(msg, data) {
@@ -39,19 +40,21 @@ function ensureOutputDir() {
     }
 }
 
-// ---------------- 核心价格触发逻辑 (2 的倍数) ----------------
+// ---------------- 核心价格变动触发逻辑 (|当前价格 - 上次推送价格| >= PRICE_STEP) ----------------
 async function handlePriceTrigger(currentPrice, open, high, low, timeStr) {
-    const integerPrice = Math.floor(currentPrice);
-
-    // 判断整数部分是否为 2 的倍数
-    if (integerPrice % 2 !== 0) {
+    // 1. 首次收到价格：建立初始基准价格并发送首发基准推送
+    if (lastPushedPrice === null) {
+        lastPushedPrice = currentPrice;
+        log(`🎯 【服务初始化基准】当前基准价格: $${currentPrice.toFixed(2)}，后续每当波动达到 $${PRICE_STEP} 时自动推送`);
+        await executePush(currentPrice, null, 0, open, high, low, timeStr);
         return;
     }
 
-    const currentLevel = integerPrice;
+    const priceDiff = currentPrice - lastPushedPrice;
+    const absDiff = Math.abs(priceDiff);
 
-    // 同一整数水平不重复触发
-    if (currentLevel === lastTriggeredLevel) {
+    // 2. 检查波动幅度是否达到步长阈值
+    if (absDiff < PRICE_STEP) {
         return;
     }
 
@@ -59,14 +62,20 @@ async function handlePriceTrigger(currentPrice, open, high, low, timeStr) {
         return;
     }
 
-    lastTriggeredLevel = currentLevel;
+    const prevPrice = lastPushedPrice;
+    lastPushedPrice = currentPrice; // 立即更新基准价，防止并发
     isProcessingTrigger = true;
 
-    try {
-        console.log('\n================================================================================');
-        log(`🎯 【价格触发 2 的倍数】当前价格: $${currentPrice.toFixed(2)} | 触发水平: $${currentLevel}`);
-        console.log('================================================================================');
+    const diffSign = priceDiff >= 0 ? '+' : '';
+    console.log('\n================================================================================');
+    log(`🎯 【价格波动触发】当前价格: $${currentPrice.toFixed(2)} | 上次价格: $${prevPrice.toFixed(2)} | 波动: ${diffSign}$${priceDiff.toFixed(2)} (>= 步长 $${PRICE_STEP})`);
+    console.log('================================================================================');
 
+    await executePush(currentPrice, prevPrice, priceDiff, open, high, low, timeStr);
+}
+
+async function executePush(currentPrice, prevPrice, priceDiff, open, high, low, timeStr) {
+    try {
         // 1. 获取 24 小时 5 分钟 K 线 (双锚点时间线性插值)
         const { bars, sourceName, statusList } = await fetch24Hours5MinKline(currentPrice, open);
         let imageBuffer = null;
@@ -80,13 +89,13 @@ async function handlePriceTrigger(currentPrice, open, high, low, timeStr) {
 
         if (bars && bars.length > 0) {
             // 2. 绘制高质量 5 分钟 K 线图 (纯内存 Buffer，不写入本地磁盘)
-            imageBuffer = drawKlineChart(bars, currentPrice, currentLevel, sourceName);
+            imageBuffer = drawKlineChart(bars, currentPrice, priceDiff, PRICE_STEP, sourceName);
 
-            // 3. 本地保存 (已默认禁用)
+            // 3. 本地保存 (按需)
             if (SAVE_LOCAL_IMAGE) {
                 ensureOutputDir();
                 const timeTag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                const historyPath = path.join(OUTPUT_DIR, `futures-trigger-5m-${currentLevel}-${timeTag}.png`);
+                const historyPath = path.join(OUTPUT_DIR, `futures-trigger-5m-${currentPrice.toFixed(2)}-${timeTag}.png`);
                 fs.writeFileSync(historyPath, imageBuffer);
                 fs.writeFileSync(LATEST_IMAGE_PATH, imageBuffer);
                 log(`💾 5分钟 K 线图已保存至本地: ${historyPath}`);
@@ -98,7 +107,9 @@ async function handlePriceTrigger(currentPrice, open, high, low, timeStr) {
         // 4. 发送企业微信提醒
         await sendToWeCom({
             price: currentPrice,
-            level: currentLevel,
+            prevPrice,
+            priceDiff,
+            priceStep: PRICE_STEP,
             open,
             high,
             low,

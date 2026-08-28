@@ -27,7 +27,7 @@ const FONT_FAMILY = 'ChineseFont, "Microsoft YaHei", "PingFang SC", "SimHei", sa
 /**
  * 绘制高质量 24 小时 5 分钟 K 线图 (1800x850, 亮色白底)
  */
-function drawKlineChart(bars, triggerPrice, triggerLevel, sourceName) {
+function drawKlineChart(bars, triggerPrice, priceDiff, priceStep, sourceName) {
     const width = 1800;
     const height = 850;
     const canvas = createCanvas(width, height);
@@ -56,9 +56,12 @@ function drawKlineChart(bars, triggerPrice, triggerLevel, sourceName) {
     ctx.fillStyle = '#64748b';
     ctx.fillText(`📊 走势数据源: ${sourceName || '多源智能对齐'}`, padLeft + 480, 38);
 
+    const diffSign = typeof priceDiff === 'number' ? (priceDiff >= 0 ? '+' : '') : '';
+    const diffStr = typeof priceDiff === 'number' && priceDiff !== 0 ? ` | 较上次: ${diffSign}$${priceDiff.toFixed(2)} (步长: $${priceStep || 2.0})` : ` | 触发基准线: $${triggerPrice.toFixed(2)}`;
+
     ctx.font = `16px ${FONT_FAMILY}`;
     ctx.fillStyle = '#d97706'; // 高对比度琥珀金
-    ctx.fillText(`🎯 触发价格: $${triggerPrice.toFixed(2)} | 触发水平: $${triggerLevel} (2的倍数)`, padLeft, 68);
+    ctx.fillText(`🎯 当前价格: $${triggerPrice.toFixed(2)}${diffStr}`, padLeft, 68);
 
     const firstBar = bars[0];
     const lastBar = bars[bars.length - 1];
@@ -182,7 +185,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel, sourceName) {
     ctx.fillStyle = '#d97706';
     ctx.fillRect(padLeft + 240, height - 30, 20, 3);
     ctx.fillStyle = '#334155';
-    ctx.fillText(`触发水平线 ($${triggerLevel})`, padLeft + 268, height - 20);
+    ctx.fillText(`当前价格线 ($${triggerPrice.toFixed(2)})`, padLeft + 268, height - 20);
 
     return canvas.toBuffer('image/png');
 }

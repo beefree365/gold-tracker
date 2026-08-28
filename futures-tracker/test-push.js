@@ -17,15 +17,16 @@ async function testPush() {
         process.exit(1);
     }
 
-    const intPrice = Math.floor(cur.price);
     // 3. 内存绘制 K 线图
-    const imageBuffer = drawKlineChart(bars, cur.price, intPrice, sourceName);
+    const imageBuffer = drawKlineChart(bars, cur.price, 2.0, 2.0, sourceName);
 
     // 4. 推送到企业微信
     console.log('📤 正在发送测试图文消息到企业微信...');
     await sendToWeCom({
         price: cur.price,
-        level: intPrice,
+        prevPrice: cur.price - 2.0,
+        priceDiff: 2.0,
+        priceStep: 2.0,
         open: cur.open,
         high: cur.high,
         low: cur.low,

@@ -32,6 +32,9 @@ module.exports = {
     // K 线新鲜度阈值 (超过 15 分钟未更新则判定为滞后历史数据，自动切换到实时流)
     MAX_STALE_MS: 15 * 60 * 1000,
 
+    // 价格变动触发步长 (当 |当前价格 - 上次推送价格| >= PRICE_STEP 时触发推送，默认 2.0 美元)
+    PRICE_STEP: parseFloat(process.env.PRICE_STEP || '2.0'),
+
     // 重连与心跳
     RECONNECT_DELAY_MS: 3000,
     PING_INTERVAL_MS: 30000,
