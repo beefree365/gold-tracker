@@ -68,8 +68,52 @@ function log(msg, data) {
     }
 }
 
+// ---------------- 方案 1: 双锚点时间线性插值对齐算法 ----------------
+function alignBarsWithDualAnchor(rawBars, currentFuturesPrice, futuresOpen) {
+    if (!rawBars || rawBars.length === 0 || !currentFuturesPrice) return rawBars;
+
+    const count = rawBars.length;
+    const latestBar = rawBars[count - 1];
+    const latestTs = new Date(latestBar.timestamp).getTime();
+
+    // 1. 终点锚点: 最新实时平滑基差 (平滑最近 3 根蜡烛过滤微观买卖一档跳价毛刺)
+    const recentBars = rawBars.slice(-3);
+    const smoothedLatestSpot = recentBars.reduce((acc, b) => acc + b.close, 0) / recentBars.length;
+    const latestOffset = currentFuturesPrice - smoothedLatestSpot;
+
+    // 2. 起点锚点: 今日开盘基准基差
+    const nowUtcDate = new Date().getUTCDate();
+    const todayOpenBar = rawBars.find(b => new Date(b.timestamp).getUTCDate() === nowUtcDate) || rawBars[Math.floor(count / 2)];
+    const openTs = new Date(todayOpenBar.timestamp).getTime();
+    const spotOpen = todayOpenBar.open;
+
+    const openOffset = (futuresOpen && futuresOpen > 0 && spotOpen > 0)
+        ? (futuresOpen - spotOpen)
+        : latestOffset;
+
+    // 3. 沿 24 小时时间轴执行双锚点动态线性插值平滑
+    return rawBars.map(b => {
+        const ts = new Date(b.timestamp).getTime();
+        let offset;
+        if (ts <= openTs) {
+            offset = openOffset;
+        } else {
+            const ratio = (ts - openTs) / Math.max(1, latestTs - openTs);
+            offset = openOffset + (latestOffset - openOffset) * ratio;
+        }
+
+        return {
+            ...b,
+            open: b.open + offset,
+            high: b.high + offset,
+            low: b.low + offset,
+            close: b.close + offset
+        };
+    });
+}
+
 // ---------------- 1. 获取 24 小时 5 分钟 K 线数据 (288 根) ----------------
-async function fetchLast24Hours5MinKline(currentFuturesPrice) {
+async function fetchLast24Hours5MinKline(currentFuturesPrice, futuresOpen) {
     const MAX_STALE_MS = 15 * 60 * 1000;
     const now = Date.now();
     const statusList = [];
@@ -77,7 +121,6 @@ async function fetchLast24Hours5MinKline(currentFuturesPrice) {
     // 方案 A: 优先级 1 - Massive.com 主力期货合约
     const massiveToken = process.env.MASSIVE_TOKEN;
     const activeFuturesContracts = ['GCZ6', 'GCV6', 'GCQ6'];
-    let massiveSucceeded = false;
 
     if (massiveToken) {
         let massiveFailureReason = '';
@@ -157,22 +200,13 @@ async function fetchLast24Hours5MinKline(currentFuturesPrice) {
                         volume: 0
                     })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-                    let bars = rawBars;
-                    if (currentFuturesPrice && rawBars.length > 0) {
-                        const offset = currentFuturesPrice - rawBars[rawBars.length - 1].close;
-                        bars = rawBars.map(b => ({
-                            ...b,
-                            open: b.open + offset,
-                            high: b.high + offset,
-                            low: b.low + offset,
-                            close: b.close + offset
-                        }));
-                    }
+                    // 双锚点平滑线性插值对齐
+                    const bars = alignBarsWithDualAnchor(rawBars, currentFuturesPrice, futuresOpen);
 
-                    statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '✅ 已生效', reason: `获取 ${bars.length} 根连续K线 (已平移对齐期货现价)` });
+                    statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '✅ 已生效', reason: `获取 ${bars.length} 根连续K线 (双锚点时间线性插值对齐)` });
                     statusList.push({ name: 'Binance PAXG 备用源', status: '⏸️ 就绪未用', reason: '前序源正常，无需启用' });
 
-                    return { bars, sourceName: 'TwelveData 现货 (已对齐期货现价)', statusList };
+                    return { bars, sourceName: 'TwelveData 现货 (双锚点线性插值对齐)', statusList };
                 }
             }
             statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '❌ 未生效', reason: '接口返回数据为空或报错' });
@@ -197,20 +231,11 @@ async function fetchLast24Hours5MinKline(currentFuturesPrice) {
                 volume: Number(item[5])
             }));
 
-            let bars = rawBars;
-            if (currentFuturesPrice && rawBars.length > 0) {
-                const offset = currentFuturesPrice - rawBars[rawBars.length - 1].close;
-                bars = rawBars.map(b => ({
-                    ...b,
-                    open: b.open + offset,
-                    high: b.high + offset,
-                    low: b.low + offset,
-                    close: b.close + offset
-                }));
-            }
+            // 双锚点平滑线性插值对齐
+            const bars = alignBarsWithDualAnchor(rawBars, currentFuturesPrice, futuresOpen);
 
-            statusList.push({ name: 'Binance PAXG 备用源', status: '✅ 已生效', reason: `获取 ${bars.length} 根 24/7 连续K线 (已平移对齐期货现价)` });
-            return { bars, sourceName: '币安 PAXG (已对齐期货现价)', statusList };
+            statusList.push({ name: 'Binance PAXG 备用源', status: '✅ 已生效', reason: `获取 ${bars.length} 根 24/7 连续K线 (双锚点时间线性插值对齐)` });
+            return { bars, sourceName: '币安 PAXG (双锚点线性插值对齐)', statusList };
         }
         statusList.push({ name: 'Binance PAXG 备用源', status: '❌ 未生效', reason: '币安接口请求失败' });
     } catch (e) {
@@ -471,8 +496,8 @@ async function checkPriceLevel(currentPrice, open, high, low, timeStr) {
         log(`🎯 【价格触发 2 的倍数】当前价格: $${currentPrice.toFixed(2)} | 触发水平: $${currentLevel}`);
         console.log('================================================================================');
 
-        // 1. 获取 24 小时 5分钟 K 线
-        const { bars, sourceName, statusList } = await fetchLast24Hours5MinKline(currentPrice);
+        // 1. 获取 24 小时 5分钟 K 线 (双锚点时间线性插值)
+        const { bars, sourceName, statusList } = await fetchLast24Hours5MinKline(currentPrice, open);
         let imageBuffer = null;
 
         // 打印 3 个数据源的生效/未生效健康检查清单
