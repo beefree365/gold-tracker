@@ -31,39 +31,19 @@ async function sendToWeCom({ price, prevPrice, priceDiff, priceStep, open, high,
             ? `> **本次波动**：<font color="info">**${diffEmoji} ${diffSign}$${priceDiff.toFixed(2)}**</font> (设定步长: $${priceStep || 2.0})`
             : `> **触发类型**：<font color="info">**服务启动初始基准**</font>`;
 
-        const prevLine = typeof prevPrice === 'number' && prevPrice > 0
-            ? `> **上次推送**：$${prevPrice.toFixed(2)}`
-            : null;
-
-        // 状态摘要行
-        const sourceLines = (statusList || []).map(s => `> - ${s.status} **${s.name}**: ${s.reason}`).join('\n');
-
-        // 1. 发送 Markdown 卡片消息
-        const markdownItems = [
-            `### 🔔 COMEX 黄金期货价格变动提醒 ${trendEmoji}`,
-            `> **当前价格**：<font color="warning">**$${price.toFixed(2)}**</font>`,
-            prevLine,
-            diffLine,
-            `> **行情时间**：${timeStr}`,
-            `> **今日开盘**：$${open.toFixed(2)} (涨跌: ${changeSign}${change}%)`,
-            `> **今日区间**：$${low.toFixed(2)} ~ $${high.toFixed(2)}`,
-            `> **走势数据源**：<font color="info">${sourceName || '多源智能对齐'}</font>`,
-            `> **数据源状态**：\n${sourceLines}`,
-            `> **K线图表**：已生成最近 24 小时 5 分钟走势图 (如下)`
-        ].filter(Boolean);
-
-        const markdownContent = markdownItems.join('\n');
+        // 1. 发送文字消息：价格：*** (保留1位小数)
+        const textContent = `价格：${price.toFixed(1)}`;
 
         const textRes = await fetch(WECOM_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                msgtype: 'markdown',
-                markdown: { content: markdownContent }
+                msgtype: 'text',
+                text: { content: textContent }
             })
         });
         const textJson = await textRes.json();
-        console.log('✓ 企微文字消息已发送:', textJson);
+        console.log(`✓ 企微文字已发送 [${textContent}]:`, textJson);
 
         // 2. 发送图片消息 (base64 + md5)
         if (imageBuffer) {

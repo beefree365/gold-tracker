@@ -57,11 +57,11 @@ function drawKlineChart(bars, triggerPrice, priceDiff, priceStep, sourceName) {
     ctx.fillText(`📊 走势数据源: ${sourceName || '多源智能对齐'}`, padLeft + 480, 38);
 
     const diffSign = typeof priceDiff === 'number' ? (priceDiff >= 0 ? '+' : '') : '';
-    const diffStr = typeof priceDiff === 'number' && priceDiff !== 0 ? ` | 较上次: ${diffSign}$${priceDiff.toFixed(2)} (步长: $${priceStep || 2.0})` : ` | 触发基准线: $${triggerPrice.toFixed(2)}`;
+    const diffStr = typeof priceDiff === 'number' && priceDiff !== 0 ? ` | 较上次: ${diffSign}$${priceDiff.toFixed(1)} (步长: $${priceStep ? priceStep.toFixed(1) : '2.0'})` : ` | 触发基准线: $${triggerPrice.toFixed(1)}`;
 
     ctx.font = `16px ${FONT_FAMILY}`;
     ctx.fillStyle = '#d97706'; // 高对比度琥珀金
-    ctx.fillText(`🎯 当前价格: $${triggerPrice.toFixed(2)}${diffStr}`, padLeft, 68);
+    ctx.fillText(`🎯 当前价格: $${triggerPrice.toFixed(1)}${diffStr}`, padLeft, 68);
 
     const firstBar = bars[0];
     const lastBar = bars[bars.length - 1];
@@ -92,7 +92,7 @@ function drawKlineChart(bars, triggerPrice, priceDiff, priceStep, sourceName) {
         ctx.lineTo(width - padRight, y);
         ctx.stroke();
 
-        const priceLabel = (plotMax - ((plotMax - plotMin) / gridCount) * i).toFixed(2);
+        const priceLabel = (plotMax - ((plotMax - plotMin) / gridCount) * i).toFixed(1);
         ctx.fillStyle = '#475569';
         ctx.font = `12px ${FONT_FAMILY}`;
         ctx.textAlign = 'right';
@@ -121,7 +121,7 @@ function drawKlineChart(bars, triggerPrice, priceDiff, priceStep, sourceName) {
     ctx.fillStyle = '#ffffff';
     ctx.font = `bold 12px ${FONT_FAMILY}`;
     ctx.textAlign = 'left';
-    ctx.fillText(`$${triggerPrice.toFixed(2)}`, width - padRight + 12, trigY + 4);
+    ctx.fillText(`$${triggerPrice.toFixed(1)}`, width - padRight + 12, trigY + 4);
 
     // 6. 绘制蜡烛图 (实体与上下影线)
     const count = bars.length;
