@@ -10,6 +10,7 @@
         "start:wss-paxg": "node wss-paxg.js",
         "start:futures": "node futures-tracker/index.js",
         "draw:futures": "node futures-tracker/draw.js",
+        "test:push": "node futures-tracker/test-push.js",
         "start:wss-futures": "node futures-tracker/index.js",
         "draw:futures-5m-kline": "node futures-tracker/draw.js",
         "draw:gcm6-kline": "node scripts/gcm6-kline.js",
