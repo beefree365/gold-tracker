@@ -461,15 +461,24 @@ async function checkPriceLevel(currentPrice, open, high, low, timeStr) {
             // 2. 绘制 5分钟 K 线图
             imageBuffer = drawKlineChart(bars, currentPrice, currentLevel);
 
-            // 保存本地图片
+            // 保存本地图片 (历史记录 + 最新快捷预览)
             const chartsDir = path.join(__dirname, 'output', 'charts');
             if (!fs.existsSync(chartsDir)) {
                 fs.mkdirSync(chartsDir, { recursive: true });
             }
             const timeTag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const filePath = path.join(chartsDir, `futures-trigger-5m-${currentLevel}-${timeTag}.png`);
-            fs.writeFileSync(filePath, imageBuffer);
-            log(`💾 5分钟 K 线图已保存到本地: ${filePath}`);
+            const historyFilePath = path.join(chartsDir, `futures-trigger-5m-${currentLevel}-${timeTag}.png`);
+            const latestChartsPath = path.join(chartsDir, 'latest-futures-5m-kline.png');
+            const rootLatestPath = path.join(__dirname, 'futures-5m-kline-latest.png');
+
+            fs.writeFileSync(historyFilePath, imageBuffer);
+            fs.writeFileSync(latestChartsPath, imageBuffer);
+            fs.writeFileSync(rootLatestPath, imageBuffer);
+
+            log(`💾 5分钟 K 线图已保存至本地:`);
+            log(`   ├─ 历史记录: ${historyFilePath}`);
+            log(`   ├─ 最新图表: ${latestChartsPath}`);
+            log(`   └─ 根目录:   ${rootLatestPath}`);
         } else {
             log('⚠️ 未获取到 K 线数据，将仅推送文字消息');
         }
