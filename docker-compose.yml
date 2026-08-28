@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  gold-tracker:
+    build: .
+    container_name: gold-futures-tracker
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
