@@ -59,14 +59,15 @@ async function fetchCurrentFuturesPrice() {
 
 // 2. 获取 24 小时 5 分钟 K 线数据
 async function fetch24Hours5MinKline(currentPrice) {
-    // 严格检查数据新鲜度: 最新一根 K 线必须在 15 分钟以内，防止盘中未更新的滞后历史数据
     const MAX_STALE_MS = 15 * 60 * 1000;
     const now = Date.now();
+    const statusList = [];
 
-    // 尝试 Massive 主力合约
+    // 方案 A: 尝试 Massive 主力合约
     const massiveToken = process.env.MASSIVE_TOKEN;
     if (massiveToken) {
-        for (const contract of ['GCZ6', 'GCV6']) {
+        let massiveFailureReason = '';
+        for (const contract of ['GCZ6', 'GCV6', 'GCQ6']) {
             try {
                 const url = new URL(`https://api.massive.com/futures/v1/aggs/${contract}`);
                 url.searchParams.set('resolution', '5min');
@@ -79,23 +80,78 @@ async function fetch24Hours5MinKline(currentPrice) {
                     if (Array.isArray(json.results) && json.results.length > 0) {
                         const latestTs = json.results[0].window_start > 1e12 ? json.results[0].window_start / 1e6 : json.results[0].window_start;
                         if (now - latestTs < MAX_STALE_MS) {
-                            return json.results.map(r => ({
+                            const bars = json.results.map(r => ({
                                 timestamp: new Date(r.window_start > 1e12 ? r.window_start / 1e6 : r.window_start).toISOString(),
                                 open: Number(r.open),
                                 high: Number(r.high),
                                 low: Number(r.low),
                                 close: Number(r.close)
                             })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                            statusList.push({ name: `Massive 期货 (${contract})`, status: '✅ 已生效', reason: `获取 ${bars.length} 根原生期货实时 K 线` });
+                            statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '⏸️ 就绪未用', reason: '前序优先级已命中' });
+                            statusList.push({ name: 'Binance PAXG 备用源', status: '⏸️ 就绪未用', reason: '前序优先级已命中' });
+                            return { bars, sourceName: `Massive 期货 (${contract})`, statusList };
                         } else {
-                            console.log(`⚠️ Massive ${contract} 最新K线停留在 ${new Date(latestTs).toLocaleTimeString()} (非当前盘中实时数据)，自动切换至毫秒级实时源`);
+                            massiveFailureReason = `数据停留在 ${new Date(latestTs).toLocaleTimeString()} (非当前盘中实时数据)`;
                         }
                     }
+                } else {
+                    massiveFailureReason = `HTTP ${res.status} 响应异常/限流`;
                 }
-            } catch (e) {}
+            } catch (e) {
+                massiveFailureReason = e.message;
+            }
+        }
+        statusList.push({ name: 'Massive 期货 (GCZ6/GCV6)', status: '❌ 未生效', reason: massiveFailureReason || '无实时数据' });
+    } else {
+        statusList.push({ name: 'Massive 期货', status: '❌ 未生效', reason: '未配置 MASSIVE_TOKEN' });
+    }
+
+    // 方案 B: TwelveData 现货
+    const twelveToken = process.env.TWELVE_TOKEN;
+    if (twelveToken) {
+        try {
+            const url = new URL('https://api.twelvedata.com/time_series');
+            url.searchParams.set('symbol', 'XAU/USD');
+            url.searchParams.set('interval', '5min');
+            url.searchParams.set('outputsize', '288');
+            url.searchParams.set('apikey', twelveToken);
+            const res = await fetch(url.toString());
+            if (res.ok) {
+                const json = await res.json();
+                if (Array.isArray(json.values) && json.values.length > 0) {
+                    const rawBars = json.values.map(r => ({
+                        timestamp: new Date(`${r.datetime.replace(' ', 'T')}Z`).toISOString(),
+                        open: Number(r.open),
+                        high: Number(r.high),
+                        low: Number(r.low),
+                        close: Number(r.close)
+                    })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                    let bars = rawBars;
+                    if (currentPrice && rawBars.length > 0) {
+                        const offset = currentPrice - rawBars[rawBars.length - 1].close;
+                        bars = rawBars.map(b => ({
+                            ...b,
+                            open: b.open + offset,
+                            high: b.high + offset,
+                            low: b.low + offset,
+                            close: b.close + offset
+                        }));
+                    }
+                    statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '✅ 已生效', reason: `获取 ${bars.length} 根连续K线 (已平移对齐期货现价)` });
+                    statusList.push({ name: 'Binance PAXG 备用源', status: '⏸️ 就绪未用', reason: '前序源正常，无需启用' });
+                    return { bars, sourceName: 'TwelveData 现货 (已对齐期货现价)', statusList };
+                }
+            }
+            statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '❌ 未生效', reason: '接口返回数据为空或报错' });
+        } catch (e) {
+            statusList.push({ name: 'TwelveData 现货 (XAU/USD)', status: '❌ 未生效', reason: e.message });
         }
     }
 
-    // 备用源: 币安 PAXG 5min 连续数据
+    // 方案 C: 备用源: 币安 PAXG 5min 连续数据
     try {
         const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=5m&limit=288');
         if (res.ok) {
@@ -107,9 +163,10 @@ async function fetch24Hours5MinKline(currentPrice) {
                 low: Number(item[3]),
                 close: Number(item[4])
             }));
+            let bars = rawBars;
             if (currentPrice && rawBars.length > 0) {
                 const offset = currentPrice - rawBars[rawBars.length - 1].close;
-                return rawBars.map(b => ({
+                bars = rawBars.map(b => ({
                     ...b,
                     open: b.open + offset,
                     high: b.high + offset,
@@ -117,15 +174,18 @@ async function fetch24Hours5MinKline(currentPrice) {
                     close: b.close + offset
                 }));
             }
-            return rawBars;
+            statusList.push({ name: 'Binance PAXG 备用源', status: '✅ 已生效', reason: `获取 ${bars.length} 根 24/7 连续K线 (已平移对齐期货现价)` });
+            return { bars, sourceName: '币安 PAXG (已对齐期货现价)', statusList };
         }
-    } catch (e) {}
+    } catch (e) {
+        statusList.push({ name: 'Binance PAXG 备用源', status: '❌ 未生效', reason: e.message });
+    }
 
-    return null;
+    return { bars: null, sourceName: '无可用源', statusList };
 }
 
 // 3. 绘制 K 线图
-function drawKline(bars, currentPrice) {
+function drawKline(bars, currentPrice, sourceName) {
     const width = 1800;
     const height = 850;
     const canvas = createCanvas(width, height);
@@ -149,6 +209,10 @@ function drawKline(bars, currentPrice) {
     ctx.fillStyle = '#0f172a';
     ctx.font = `bold 26px ${FONT_FAMILY}`;
     ctx.fillText('COMEX 黄金期货 24小时 5分钟 K线走势图', padLeft, 38);
+
+    ctx.font = `14px ${FONT_FAMILY}`;
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(`📊 数据来源: ${sourceName || '多源智能对齐'}`, padLeft + 490, 38);
 
     const intPrice = Math.floor(currentPrice);
     ctx.font = `16px ${FONT_FAMILY}`;
@@ -283,14 +347,20 @@ function drawKline(bars, currentPrice) {
 async function main() {
     console.log('正在获取当前期货数据与 24 小时 5 分钟 K 线...');
     const cur = await fetchCurrentFuturesPrice();
-    const bars = await fetch24Hours5MinKline(cur.price);
+    const { bars, sourceName, statusList } = await fetch24Hours5MinKline(cur.price);
+
+    console.log('\n┌────────────────────────────── 3 级数据源状态排查 ──────────────────────────────┐');
+    for (const item of (statusList || [])) {
+        console.log(`│ [${item.status}] ${item.name.padEnd(28)} : ${item.reason}`);
+    }
+    console.log('└────────────────────────────────────────────────────────────────────────────────┘\n');
 
     if (!bars || bars.length === 0) {
         console.error('❌ 未能获取到 K 线数据');
         process.exit(1);
     }
 
-    const buffer = drawKline(bars, cur.price);
+    const buffer = drawKline(bars, cur.price, sourceName);
 
     const chartsDir = path.join(__dirname, '..', 'output', 'charts');
     if (!fs.existsSync(chartsDir)) {
