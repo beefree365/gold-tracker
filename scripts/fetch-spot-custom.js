@@ -112,7 +112,7 @@ function priceToY(price, minPrice, maxPrice, top, height) {
 function drawSpotChart(spotBars) {
     // ================= 动态分辨率计算 =================
     // 保证每根K线至少有 4 像素宽，确保绝对清晰。最窄 1920 (1080p标准)，最宽限制在 12000 像素防内存溢出
-    const minPixelsPerCandle = 3;
+    const minPixelsPerCandle = 4;
     const padLeft = 100;
     const padRight = 40;
     const calculatedWidth = padLeft + padRight + (spotBars.length * minPixelsPerCandle);
