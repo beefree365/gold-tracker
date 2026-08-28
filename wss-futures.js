@@ -119,24 +119,28 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
     const chartHeight = height - padTop - padBottom;
     const chartWidth = width - padLeft - padRight;
 
-    // 1. 深色背景
-    ctx.fillStyle = '#0f172a';
+    // 1. 亮色背景 (白色主画布 + 极简淡灰网格区)
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
 
-    // 2. 顶部标题与触发信息
+    // 绘制图表主体区域浅灰背景
     ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(padLeft, padTop, chartWidth, chartHeight);
+
+    // 2. 顶部标题与触发信息 (深色清晰文字)
+    ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 26px sans-serif';
     ctx.fillText('COMEX 黄金期货 24小时 1分钟 K线图', padLeft, 38);
 
     ctx.font = '16px sans-serif';
-    ctx.fillStyle = '#fbbf24';
+    ctx.fillStyle = '#d97706'; // 亮色下清晰的高对比度琥珀金
     ctx.fillText(`🎯 触发价格: $${triggerPrice.toFixed(2)} | 触发水平: $${triggerLevel} (2的倍数)`, padLeft, 68);
 
     const firstBar = bars[0];
     const lastBar = bars[bars.length - 1];
     const formatTime = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
     ctx.font = '14px sans-serif';
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = '#64748b';
     ctx.fillText(`时间跨度: ${formatTime(firstBar.timestamp)}  ➜  ${formatTime(lastBar.timestamp)}  (共 ${bars.length} 根K线)`, padLeft + 620, 68);
 
     // 3. 计算价格极值范围
@@ -152,7 +156,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
 
     // 4. 绘制水平网格与 Y 轴刻度
     const gridCount = 6;
-    ctx.strokeStyle = '#1e293b';
+    ctx.strokeStyle = '#e2e8f0'; // 浅灰网格线
     ctx.lineWidth = 1;
     for (let i = 0; i <= gridCount; i++) {
         const y = padTop + (chartHeight / gridCount) * i;
@@ -162,15 +166,20 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
         ctx.stroke();
 
         const priceLabel = (plotMax - ((plotMax - plotMin) / gridCount) * i).toFixed(2);
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = '#475569';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'right';
         ctx.fillText(`$${priceLabel}`, padLeft - 12, y + 4);
     }
 
-    // 5. 绘制触发价格水平线（金色虚线）
+    // 绘制图表外边框
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(padLeft, padTop, chartWidth, chartHeight);
+
+    // 5. 绘制触发价格水平线（琥珀金色虚线）
     const triggerY = priceToY(triggerPrice);
-    ctx.strokeStyle = '#fbbf24';
+    ctx.strokeStyle = '#d97706';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
@@ -180,9 +189,9 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
     ctx.setLineDash([]); // 恢复实线
 
     // 触发线右侧价格标签
-    ctx.fillStyle = '#fbbf24';
+    ctx.fillStyle = '#d97706';
     ctx.fillRect(width - padRight + 6, triggerY - 11, 70, 22);
-    ctx.fillStyle = '#0f172a';
+    ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(`$${triggerPrice.toFixed(2)}`, width - padRight + 12, triggerY + 4);
@@ -201,7 +210,7 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
         const lowY = priceToY(bar.low);
 
         const isUp = bar.close >= bar.open;
-        const color = isUp ? '#22c55e' : '#ef4444';
+        const color = isUp ? '#16a34a' : '#dc2626'; // 亮色下清晰的红绿配色
 
         // 影线
         ctx.strokeStyle = color;
@@ -217,16 +226,16 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
         const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
         ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
 
-        // 时间轴标签
+        // 时间轴刻度线与标签
         if (i % labelStep === 0 || i === count - 1) {
-            ctx.strokeStyle = '#334155';
+            ctx.strokeStyle = '#94a3b8';
             ctx.beginPath();
             ctx.moveTo(x, padTop + chartHeight);
             ctx.lineTo(x, padTop + chartHeight + 6);
             ctx.stroke();
 
             const timeStr = new Date(bar.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
-            ctx.fillStyle = '#94a3b8';
+            ctx.fillStyle = '#475569';
             ctx.font = '11px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText(timeStr, x, height - 55);
@@ -235,20 +244,20 @@ function drawKlineChart(bars, triggerPrice, triggerLevel) {
 
     // 7. 底部图例
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#22c55e';
+    ctx.fillStyle = '#16a34a';
     ctx.fillRect(padLeft, height - 30, 12, 12);
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = '#334155';
     ctx.font = '13px sans-serif';
     ctx.fillText('上涨 (Up)', padLeft + 18, height - 20);
 
-    ctx.fillStyle = '#ef4444';
+    ctx.fillStyle = '#dc2626';
     ctx.fillRect(padLeft + 120, height - 30, 12, 12);
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = '#334155';
     ctx.fillText('下跌 (Down)', padLeft + 138, height - 20);
 
-    ctx.fillStyle = '#fbbf24';
+    ctx.fillStyle = '#d97706';
     ctx.fillRect(padLeft + 240, height - 30, 20, 3);
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = '#334155';
     ctx.fillText(`触发水平线 ($${triggerLevel})`, padLeft + 268, height - 20);
 
     return canvas.toBuffer('image/png');
